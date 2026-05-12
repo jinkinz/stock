@@ -1,0 +1,51 @@
+{
+  "settings": {
+    "symbol": "AAPL.US",
+    "markets": [
+      "US"
+    ],
+    "universe": [],
+    "max_scan_symbols": 8,
+    "trading_mode": "paper",
+    "approval_mode": "auto",
+    "budget": 1000.0,
+    "duration_minutes": 86400,
+    "max_loss": 25.0,
+    "max_trade_value": 250.0,
+    "auto_tick_enabled": true,
+    "tick_interval_seconds": 60,
+    "allow_live_trading": false,
+    "stop_at_end": true,
+    "strategy_enabled": true,
+    "started_at": "2026-05-12T18:59:12.894545+00:00"
+  },
+  "paper": {
+    "portfolio": {
+      "cash": 10000.0,
+      "realized_pnl": 0.0,
+      "positions": {},
+      "last_prices": {
+        "AAPL.US": 260.49,
+        "MSFT.US": 255.83,
+        "NVDA.US": 184.41,
+        "TSLA.US": 122.32,
+        "AMD.US": 294.77,
+        "META.US": 137.8,
+        "GOOGL.US": 237.76,
+        "AMZN.US": 58.52
+      }
+    },
+    "prices": {
+      "AAPL.US": 260.49,
+      "MSFT.US": 255.83,
+      "NVDA.US": 184.41,
+      "TSLA.US": 122.32,
+      "AMD.US": 294.77,
+      "META.US": 137.8,
+      "GOOGL.US": 237.76,
+      "AMZN.US": 58.52
+    }
+  },
+  "proposals": [],
+  "last_tick_at": "2026-05-12T19:05:46.174193+00:00"
+}

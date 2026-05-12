@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trading Tool</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>Trading Tool</h1>
+          <p id="marketLine">Paper mode, waiting for data</p>
+        </div>
+        <button id="tickButton" class="primary">Run Tick</button>
+      </section>
+
+      <section class="grid">
+        <form id="settingsForm" class="panel controls">
+          <div class="field">
+            <label>Markets</label>
+            <div class="market-picks">
+              <label class="chip"><input name="markets" type="checkbox" value="US" checked /><span>US</span></label>
+              <label class="chip"><input name="markets" type="checkbox" value="HK" /><span>HK</span></label>
+              <label class="chip"><input name="markets" type="checkbox" value="SG" /><span>SG</span></label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="universe">Custom Universe</label>
+            <textarea id="universe" name="universe" rows="4" placeholder="Optional: enter symbols to restrict the scan, e.g. AAPL.US, 700.HK, D05.SG"></textarea>
+            <p class="hint" id="universeSource">Blank uses discovery where available, then sample fallback.</p>
+          </div>
+
+          <div class="split">
+            <div class="field">
+              <label for="budget">Budget</label>
+              <input id="budget" name="budget" type="number" min="0" step="10" value="1000" />
+            </div>
+            <div class="field">
+              <label for="duration_minutes">Duration</label>
+              <input id="duration_minutes" name="duration_minutes" type="number" min="1" step="1" value="390" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="max_scan_symbols">Max Symbols Per Scan</label>
+            <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="1" max="500" step="1" value="50" />
+          </div>
+
+          <div class="split">
+            <div class="field">
+              <label for="max_loss">Max Loss</label>
+              <input id="max_loss" name="max_loss" type="number" min="0" step="1" value="25" />
+            </div>
+            <div class="field">
+              <label for="max_trade_value">Max Trade</label>
+              <input id="max_trade_value" name="max_trade_value" type="number" min="0" step="10" value="250" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Trading Mode</label>
+            <div class="segmented" data-name="trading_mode">
+              <button type="button" data-value="paper" class="active">Paper</button>
+              <button type="button" data-value="live">Live</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Approval</label>
+            <div class="segmented" data-name="approval_mode">
+              <button type="button" data-value="manual" class="active">Manual</button>
+              <button type="button" data-value="auto">Auto</button>
+            </div>
+          </div>
+
+          <label class="toggle">
+            <input id="strategy_enabled" name="strategy_enabled" type="checkbox" />
+            <span>Strategy running</span>
+          </label>
+
+          <label class="toggle">
+            <input id="auto_tick_enabled" name="auto_tick_enabled" type="checkbox" />
+            <span>Auto paper scan</span>
+          </label>
+
+          <div class="field">
+            <label for="tick_interval_seconds">Scan Interval Seconds</label>
+            <input id="tick_interval_seconds" name="tick_interval_seconds" type="number" min="5" step="5" value="60" />
+          </div>
+
+          <label class="toggle danger">
+            <input id="allow_live_trading" name="allow_live_trading" type="checkbox" />
+            <span>Allow live order submission</span>
+          </label>
+
+          <button class="primary wide" type="submit">Save Settings</button>
+        </form>
+
+        <section class="panel metrics">
+          <div class="metric">
+            <span>Cash</span>
+            <strong id="cash">$0.00</strong>
+          </div>
+          <div class="metric">
+            <span>Equity</span>
+            <strong id="equity">$0.00</strong>
+          </div>
+          <div class="metric">
+            <span>Realized P&L</span>
+            <strong id="realized">$0.00</strong>
+          </div>
+          <div class="metric">
+            <span>Unrealized P&L</span>
+            <strong id="unrealized">$0.00</strong>
+          </div>
+          <div class="metric">
+            <span>Scanned</span>
+            <strong id="scanned">0</strong>
+          </div>
+          <div class="metric">
+            <span>Last Tick</span>
+            <strong id="lastTick">Never</strong>
+          </div>
+        </section>
+      </section>
+
+      <section class="columns">
+        <section class="panel">
+          <h2>Market Scan</h2>
+          <div id="quote" class="empty">No quote yet</div>
+        </section>
+        <section class="panel">
+          <h2>Positions</h2>
+          <div id="positions" class="empty">No positions</div>
+        </section>
+      </section>
+
+      <section class="panel">
+        <h2>AI Ranking</h2>
+        <div id="signals" class="empty">No scan yet</div>
+      </section>
+
+      <section class="panel">
+        <h2>Trade Proposals</h2>
+        <div id="proposals" class="empty">No proposals yet</div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
