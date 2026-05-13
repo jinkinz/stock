@@ -30,7 +30,7 @@ class PaperBroker:
 
     def __init__(
         self,
-        starting_cash: float = 10000.0,
+        starting_cash: float = 0.0,
         portfolio: Portfolio | None = None,
         prices: dict[str, float] | None = None,
     ) -> None:

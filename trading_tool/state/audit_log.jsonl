@@ -651,3 +651,6 @@
 {"event": "signal", "at": "2026-05-13T09:18:47.336034+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.24999999999999667, "price": 462.6, "reason": "No strong entry or exit edge right now."}}
 {"event": "signal", "at": "2026-05-13T09:18:47.336432+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.24999999999999556, "price": 433.45, "reason": "No strong entry or exit edge right now."}}
 {"event": "signal", "at": "2026-05-13T09:18:47.336739+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.24999999999999556, "price": 132.8, "reason": "No strong entry or exit edge right now."}}
+{"event": "tick", "at": "2026-05-13T09:20:48.571130+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "tick", "at": "2026-05-13T09:23:20.825535+00:00", "symbol": null, "detail": {"detail": {"action": "paper_reset", "starting_cash": 10000.0}}}
+{"event": "tick", "at": "2026-05-13T09:26:53.313260+00:00", "symbol": null, "detail": {"detail": {"action": "paper_reset", "starting_cash": 10.0}}}

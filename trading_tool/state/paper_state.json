@@ -9,123 +9,30 @@
     "universe": [],
     "max_scan_symbols": 0,
     "trading_mode": "paper",
-    "approval_mode": "auto",
+    "approval_mode": "manual",
     "budget": 10.0,
-    "duration_minutes": 86400,
+    "duration_minutes": 390,
     "max_loss": 25.0,
     "max_trade_value": 250.0,
     "auto_tick_enabled": true,
     "tick_interval_seconds": 60,
     "allow_live_trading": false,
     "stop_at_end": true,
-    "strategy_enabled": true,
-    "started_at": "2026-05-12T18:59:12.894545+00:00"
+    "strategy_enabled": false,
+    "started_at": null
   },
   "paper": {
     "portfolio": {
-      "cash": 9525.28,
-      "realized_pnl": -1.19,
-      "positions": {
-        "GOOGL.US": {
-          "symbol": "GOOGL.US",
-          "quantity": 1.0,
-          "avg_cost": 237.41
-        },
-        "TSLA.US": {
-          "symbol": "TSLA.US",
-          "quantity": 0.0,
-          "avg_cost": 0.0
-        },
-        "AMZN.US": {
-          "symbol": "AMZN.US",
-          "quantity": 4.0,
-          "avg_cost": 59.03
-        }
-      },
-      "last_prices": {
-        "AAPL.US": 294.8,
-        "MSFT.US": 407.77,
-        "NVDA.US": 220.78,
-        "TSLA.US": 433.45,
-        "AMD.US": 448.29,
-        "META.US": 603.0,
-        "GOOGL.US": 387.35,
-        "AMZN.US": 265.82,
-        "700.HK": 462.6,
-        "9988.HK": 132.8,
-        "3690.HK": 87.6,
-        "1810.HK": 31.8,
-        "1299.HK": 86.95,
-        "388.HK": 423.8
-      }
+      "cash": 10.0,
+      "realized_pnl": 0.0,
+      "positions": {},
+      "last_prices": {}
     },
-    "prices": {
-      "AAPL.US": 294.8,
-      "MSFT.US": 407.77,
-      "NVDA.US": 220.78,
-      "TSLA.US": 433.45,
-      "AMD.US": 448.29,
-      "META.US": 603.0,
-      "GOOGL.US": 387.35,
-      "AMZN.US": 265.82,
-      "700.HK": 462.6,
-      "9988.HK": 132.8,
-      "3690.HK": 87.6,
-      "1810.HK": 31.8,
-      "1299.HK": 86.95,
-      "388.HK": 423.8
-    }
+    "prices": {}
   },
-  "proposals": [
-    {
-      "symbol": "GOOGL.US",
-      "side": "buy",
-      "quantity": 1.0,
-      "price": 237.41,
-      "reason": "Positive short-term momentum versus the intraday baseline ranks this as a buy candidate.",
-      "confidence": 0.6501445779045929,
-      "id": "2920c64188574c45888be44fc3aa7ece",
-      "status": "filled",
-      "created_at": "2026-05-13T03:35:31.861247+00:00",
-      "error": null
-    },
-    {
-      "symbol": "TSLA.US",
-      "side": "buy",
-      "quantity": 1.0,
-      "price": 125.18,
-      "reason": "Positive short-term momentum versus the intraday baseline ranks this as a buy candidate.",
-      "confidence": 0.6881804442285395,
-      "id": "83784e8c535f4aee93c981efdb90a9a3",
-      "status": "filled",
-      "created_at": "2026-05-13T03:41:31.902148+00:00",
-      "error": null
-    },
-    {
-      "symbol": "AMZN.US",
-      "side": "buy",
-      "quantity": 4.0,
-      "price": 59.03,
-      "reason": "Positive short-term momentum versus the intraday baseline ranks this as a buy candidate.",
-      "confidence": 0.7084264007455394,
-      "id": "f24ee51ba20a4765b6a389f33027f765",
-      "status": "filled",
-      "created_at": "2026-05-13T03:48:31.972402+00:00",
-      "error": null
-    },
-    {
-      "symbol": "TSLA.US",
-      "side": "sell",
-      "quantity": 1.0,
-      "price": 123.99,
-      "reason": "Momentum weakened versus the intraday baseline; exit is prioritized to protect P&L.",
-      "confidence": 0.5930854178867191,
-      "id": "2b5c646eb11e4343a04c0748ccc127d9",
-      "status": "filled",
-      "created_at": "2026-05-13T03:52:31.998227+00:00",
-      "error": null
-    }
-  ],
-  "last_tick_at": "2026-05-13T09:18:47.328229+00:00",
-  "tick_paused": false
+  "proposals": [],
+  "last_tick_at": null,
+  "tick_paused": false,
+  "session_start_at": null,
+  "session_start_equity": 0.0
 }

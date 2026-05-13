@@ -67,7 +67,7 @@ TRADE_RATE_LIMITER = TradingRateLimiter()
 class AppState:
     def __init__(self) -> None:
         self.settings = Settings()
-        self.paper_broker = PaperBroker()
+        self.paper_broker = PaperBroker(starting_cash=self.settings.budget)
         self.live_broker: LongbridgeBroker | None = None
         self.strategy = MomentumStrategy()
         self.proposals: list[OrderProposal] = []
@@ -114,7 +114,7 @@ class AppState:
                 for symbol, pos in portfolio_data.get("positions", {}).items()
             }
             portfolio = Portfolio(
-                cash=float(portfolio_data.get("cash", 10000.0)),
+                cash=float(portfolio_data.get("cash", STATE.settings.budget)),
                 realized_pnl=float(portfolio_data.get("realized_pnl", 0.0)),
                 positions=positions,
                 last_prices={s: float(p) for s, p in portfolio_data.get("last_prices", {}).items()},
@@ -208,7 +208,7 @@ class AppState:
 STATE = AppState()
 
 
-def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float = 10000.0) -> dict:
+def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float = 0.0) -> dict:
     from .broker import PaperBroker as _PB
     from .strategy import MomentumStrategy as _MS
     bt_broker = _PB(starting_cash=starting_cash)
@@ -318,10 +318,11 @@ class TradingEngine:
             STATE.save()
             return self.status()
 
-    def reset_paper(self, starting_cash: float = 10000.0) -> dict:
+    def reset_paper(self, starting_cash: float | None = None) -> dict:
         with STATE.lock:
+            cash = starting_cash if starting_cash is not None else STATE.settings.budget
             STATE.close_session()
-            STATE.paper_broker = PaperBroker(starting_cash=starting_cash)
+            STATE.paper_broker = PaperBroker(starting_cash=cash)
             STATE.proposals = []
             STATE.signals = []
             STATE.last_quotes = []
@@ -330,7 +331,7 @@ class TradingEngine:
             STATE.settings.strategy_enabled = False
             STATE.settings.started_at = None
             STATE.save()
-            STATE.audit(AuditEventType.TICK, detail={"action": "paper_reset", "starting_cash": starting_cash})
+            STATE.audit(AuditEventType.TICK, detail={"action": "paper_reset", "starting_cash": cash})
             return self.status()
 
     def pause_tick(self) -> dict:
@@ -498,7 +499,7 @@ def _p_reject(self, pid):
     r = _o["reject"](self, pid)
     if r: sse_broadcast(self.status())
     return r
-def _p_reset(self, cash=10000.0):
+def _p_reset(self, cash=None):
     r = _o["reset_paper"](self, cash); sse_broadcast(r); return r
 
 TradingEngine.tick = _p_tick
@@ -554,7 +555,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/tick/resume":
             self._json(ENGINE.resume_tick())
         elif path == "/api/paper/reset":
-            cash = float(self._read_json().get("starting_cash", 10000.0))
+            payload = self._read_json()
+            # If caller passes starting_cash explicitly use it, otherwise fall back to budget
+            cash = float(payload["starting_cash"]) if "starting_cash" in payload else None
             self._json(ENGINE.reset_paper(cash))
         elif path.startswith("/api/proposals/") and path.endswith("/approve"):
             pid = path.split("/")[3]
@@ -572,7 +575,7 @@ class Handler(BaseHTTPRequestHandler):
             p = self._read_json()
             symbols = p.get("symbols") or STATE.settings.active_universe()
             ticks = max(10, min(500, int(p.get("ticks", 60))))
-            cash = float(p.get("starting_cash", 10000.0))
+            cash = float(p.get("starting_cash", 0.0))
             self._json(run_backtest(symbols, ticks=ticks, starting_cash=cash))
         else:
             self.send_error(HTTPStatus.NOT_FOUND)

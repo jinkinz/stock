@@ -316,8 +316,8 @@ document.querySelector("#backtestButton").addEventListener("click", async () => 
 });
 
 document.querySelector("#resetPaperButton").addEventListener("click", async () => {
-  if (!confirm("Reset paper portfolio to $10,000 cash? This clears all positions and proposals.")) return;
-  render(await api("/api/paper/reset", { method: "POST", body: JSON.stringify({ starting_cash: 10000 }) }));
+  if (!confirm(`Reset paper portfolio to $${state.settings?.budget || "budget"} cash? This clears all positions and proposals.`)) return;
+  render(await api("/api/paper/reset", { method: "POST", body: JSON.stringify({}) }));
   _auditBuffer.length = 0;
 });
 

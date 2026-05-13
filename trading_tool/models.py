@@ -38,7 +38,7 @@ class Settings:
     max_scan_symbols: int = 50
     trading_mode: TradingMode = TradingMode.PAPER
     approval_mode: ApprovalMode = ApprovalMode.MANUAL
-    budget: float = 1000.0
+    budget: float = 0.0
     duration_minutes: int = 390
     max_loss: float = 25.0
     max_trade_value: float = 250.0
