@@ -25,7 +25,8 @@ function render(data) {
   state = data;
   const { settings, portfolio, last_quotes: quotes = [], universe_source = "sample",
           signals = [], proposals, tick_paused = false,
-          session_pnl = 0, session_start_at = null } = data;
+          session_pnl = 0, session_start_at = null,
+          signals_updated_at = null } = data;
 
   selected.trading_mode = settings.trading_mode;
   selected.approval_mode = settings.approval_mode;
@@ -80,10 +81,10 @@ function render(data) {
   pauseMetricEl.classList.toggle("paused-indicator", tick_paused);
 
   renderQuotes(quotes);
-  renderSignals(signals);
+  renderSignals(signals, signals_updated_at);
   renderPositions(portfolio);
   renderProposals(proposals || []);
-  renderDiagnostics(signals);
+  renderDiagnostics(signals, signals_updated_at);
 }
 
 function paintPnl(sel, value) {
@@ -128,9 +129,22 @@ function renderQuotes(quotes) {
     </div>`).join("");
 }
 
-function renderSignals(signals) {
+function tsLabel(isoStr) {
+  if (!isoStr) return '';
+  const d = new Date(isoStr);
+  const ageMs = Date.now() - d.getTime();
+  const stale = ageMs > 30000;
+  const label = d.toLocaleTimeString();
+  return `<span class="section-ts${stale ? ' stale' : ''}" title="${stale ? 'Data may be stale' : 'Live'}">updated ${label}${stale ? ' ⚠' : ''}</span>`;
+}
+
+function renderSignals(signals, updatedAt) {
+  // Update the h2 timestamp
+  const tsEl = document.querySelector("#signalsTs");
+  if (tsEl) tsEl.innerHTML = tsLabel(updatedAt);
+
   const el = document.querySelector("#signals");
-  if (!signals.length) { el.innerHTML = `<div class="empty">No scan yet</div>`; return; }
+  if (!signals.length) { el.innerHTML = `<div class="empty">No scan yet — run a tick or enable Auto scan</div>`; return; }
   el.innerHTML = signals.map(s => `
     <div class="row">
       <div><span class="tag ${s.action}">${s.action}</span>
@@ -143,16 +157,26 @@ function renderSignals(signals) {
 function renderProposals(proposals) {
   const el = document.querySelector("#proposals");
   if (!proposals.length) { el.innerHTML = `<div class="empty">No proposals yet</div>`; return; }
+  const isManual = state.settings?.approval_mode === "manual";
+  const TTL = 300;
   el.innerHTML = [...proposals].reverse().map(p => {
     const pending = p.status === "proposed";
+    let ageInfo = "";
+    if (pending && isManual && p.created_at) {
+      const ageSec = Math.floor((Date.now() - new Date(p.created_at).getTime()) / 1000);
+      const remaining = Math.max(0, TTL - ageSec);
+      const cls = remaining < 60 ? "loss" : remaining < 120 ? "" : "";
+      ageInfo = `<br><span class="${cls}" style="font-size:11px;color:var(--muted)">⏱ ${ageSec}s old · expires in ${remaining}s</span>`;
+    }
     return `<div class="row">
       <div><span class="tag ${p.side}">${p.side}</span>
         <strong> ${formatQty(p.quantity)} ${p.symbol} @ ${money(p.price)}</strong>
         <br><span>${p.reason}</span>
-        ${p.error ? `<br><span class="loss">${p.error}</span>` : ""}
+        ${ageInfo}
+        ${p.error ? `<br><span class="loss" style="font-size:11px">${p.error}</span>` : ""}
       </div>
-      <div>
-        <span class="tag">${p.status}</span>
+      <div style="text-align:right">
+        <span class="tag ${p.status}">${p.status}</span>
         ${pending ? `<div class="actions">
           <button class="approve" data-action="approve" data-id="${p.id}">Approve</button>
           <button class="reject" data-action="reject" data-id="${p.id}">Reject</button>
@@ -162,7 +186,10 @@ function renderProposals(proposals) {
   }).join("");
 }
 
-function renderDiagnostics(signals) {
+function renderDiagnostics(signals, updatedAt) {
+  const tsEl = document.querySelector("#diagTs");
+  if (tsEl) tsEl.innerHTML = tsLabel(updatedAt);
+
   const el = document.querySelector("#diagnostics");
   const withDiag = signals.filter(s => s.diagnostics);
   if (!withDiag.length) { el.innerHTML = `<div class="empty">No diagnostics yet</div>`; return; }

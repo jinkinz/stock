@@ -9,30 +9,60 @@
     "universe": [],
     "max_scan_symbols": 0,
     "trading_mode": "paper",
-    "approval_mode": "manual",
-    "budget": 10.0,
-    "duration_minutes": 390,
-    "max_loss": 25.0,
+    "approval_mode": "auto",
+    "budget": 80.0,
+    "duration_minutes": 634,
+    "max_loss": 50.0,
     "max_trade_value": 250.0,
     "auto_tick_enabled": true,
-    "tick_interval_seconds": 60,
+    "tick_interval_seconds": 10,
     "allow_live_trading": false,
     "stop_at_end": true,
-    "strategy_enabled": false,
-    "started_at": null
+    "strategy_enabled": true,
+    "started_at": "2026-05-13T18:34:37.363840+00:00"
   },
   "paper": {
     "portfolio": {
-      "cash": 10.0,
+      "cash": 80.0,
       "realized_pnl": 0.0,
       "positions": {},
-      "last_prices": {}
+      "last_prices": {
+        "AAPL.US": 299.58,
+        "MSFT.US": 405.59,
+        "NVDA.US": 227.085,
+        "TSLA.US": 448.03,
+        "AMD.US": 449.32,
+        "META.US": 618.23,
+        "GOOGL.US": 403.445,
+        "AMZN.US": 270.03,
+        "700.HK": 462.6,
+        "9988.HK": 132.8,
+        "3690.HK": 87.6,
+        "1810.HK": 31.8,
+        "1299.HK": 86.95,
+        "388.HK": 423.8
+      }
     },
-    "prices": {}
+    "prices": {
+      "AAPL.US": 299.58,
+      "MSFT.US": 405.59,
+      "NVDA.US": 227.085,
+      "TSLA.US": 448.03,
+      "AMD.US": 449.32,
+      "META.US": 618.23,
+      "GOOGL.US": 403.445,
+      "AMZN.US": 270.03,
+      "700.HK": 462.6,
+      "9988.HK": 132.8,
+      "3690.HK": 87.6,
+      "1810.HK": 31.8,
+      "1299.HK": 86.95,
+      "388.HK": 423.8
+    }
   },
   "proposals": [],
-  "last_tick_at": null,
+  "last_tick_at": "2026-05-13T18:35:21.501894+00:00",
   "tick_paused": false,
-  "session_start_at": null,
-  "session_start_equity": 0.0
+  "session_start_at": "2026-05-13T18:34:37.363856+00:00",
+  "session_start_equity": 80.0
 }

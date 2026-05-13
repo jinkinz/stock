@@ -1,17 +1,51 @@
+"""
+MomentumStrategy — the only strategy currently running.
+
+What it does (plain English):
+──────────────────────────────
+1. Every tick, it records the latest price for each symbol into a 30-price
+   rolling window.
+2. It computes:
+     short_avg  = average of the last 3 prices  (recent trend)
+     long_avg   = average of all 30 prices       (intraday baseline)
+     momentum   = short_avg / long_avg - 1       (deviation %)
+3. BUY  when momentum > +0.2% AND no position held AND cash available.
+4. SELL when momentum < -0.2% AND a position is held.
+5. Signals are ranked by score; top 5 proposals are returned per scan.
+6. A max-loss circuit-breaker stops all new buys if total P&L ≤ -max_loss.
+
+What it does NOT do:
+  - No options, no margin, no short-selling (only buys what cash covers,
+    only sells what is already held).
+  - No news, no fundamentals, no earnings calendar, no volume from
+    real exchanges (only the diagnostics spike heuristic).
+  - Needs at least 8 price observations per symbol before it will rank it.
+
+Budget vs cash (important):
+  budget       = the maximum STARTING cash for the paper account.
+                 It is NOT re-applied as a per-tick cap.
+  portfolio.cash = the actual spendable balance at any moment.
+  The strategy buys against portfolio.cash directly, divided across
+  however many buy signals exist, capped by max_trade_value per trade.
+"""
 from __future__ import annotations
 
 import math
 import statistics
 from collections import deque
+from datetime import datetime, timezone
 
 from .broker import affordable_quantity
 from .models import Diagnostics, OrderProposal, Portfolio, Quote, Settings, Side, Signal
+
+# How many ticks a proposal stays valid in manual-approval mode before
+# it is considered stale and should be ignored by the UI / auto-expiry.
+PROPOSAL_TTL_SECONDS = 300   # 5 minutes
 
 
 class MomentumStrategy:
     def __init__(self) -> None:
         self.history: dict[str, deque[float]] = {}
-        # Track tick counts per symbol to detect volume spikes
         self._tick_counts: dict[str, deque[int]] = {}
         self._current_ticks: dict[str, int] = {}
 
@@ -25,10 +59,8 @@ class MomentumStrategy:
         self._current_ticks[quote.symbol] = self._current_ticks.get(quote.symbol, 0) + 1
 
     def flush_tick_counts(self) -> None:
-        """Call once per scan cycle to bucket tick counts."""
         for symbol, count in self._current_ticks.items():
-            window = self._tick_counts.setdefault(symbol, deque(maxlen=10))
-            window.append(count)
+            self._tick_counts.setdefault(symbol, deque(maxlen=10)).append(count)
         self._current_ticks = {}
 
     # ------------------------------------------------------------------
@@ -38,20 +70,16 @@ class MomentumStrategy:
     def _diagnostics(self, quote: Quote) -> Diagnostics:
         prices = list(self.history.get(quote.symbol, []))
 
-        # Volatility: annualised std-dev of log-returns (approx 252 trading days,
-        # each scan ~1 min → scale by sqrt(252*390) for intraday)
         volatility = 0.0
         if len(prices) >= 4:
-            returns = [math.log(prices[i] / prices[i - 1]) for i in range(1, len(prices)) if prices[i - 1] > 0]
+            returns = [math.log(prices[i] / prices[i - 1])
+                       for i in range(1, len(prices)) if prices[i - 1] > 0]
             if len(returns) >= 2:
                 vol_per_tick = statistics.stdev(returns)
-                # annualise roughly (252 days × 390 ticks/day)
                 volatility = round(vol_per_tick * math.sqrt(252 * 390) * 100, 2)
 
-        # Spread estimate: 0.1% baseline + extra if high volatility
         spread_pct = round(0.001 + max(0.0, volatility / 10000), 4)
 
-        # Volume spike: current tick count >2× average of past windows
         tick_windows = list(self._tick_counts.get(quote.symbol, []))
         volume_spike = False
         if tick_windows:
@@ -59,15 +87,11 @@ class MomentumStrategy:
             current = self._current_ticks.get(quote.symbol, 0)
             volume_spike = avg_ticks > 0 and current > avg_ticks * 2
 
-        # Trend strength
         trend_strength = 0.0
         if len(prices) >= 8:
             short_avg = sum(prices[-3:]) / 3
             long_avg = sum(prices) / len(prices)
             trend_strength = round(abs(short_avg / long_avg - 1.0) * 100, 3)
-
-        # News gate stub — always open unless you wire up a real news feed
-        news_gate = True
 
         return Diagnostics(
             symbol=quote.symbol,
@@ -76,53 +100,11 @@ class MomentumStrategy:
             spread_pct=spread_pct,
             volume_spike=volume_spike,
             trend_strength=trend_strength,
-            news_gate=news_gate,
+            news_gate=True,   # stub — wire up a real news feed here
         )
 
     # ------------------------------------------------------------------
-    # Single-symbol propose (used in live tick mode)
-    # ------------------------------------------------------------------
-
-    def propose(self, settings: Settings, quote: Quote, portfolio: Portfolio) -> OrderProposal | None:
-        prices = self.history.setdefault(quote.symbol, deque(maxlen=30))
-        if len(prices) < 8:
-            return None
-
-        short_avg = sum(list(prices)[-3:]) / 3
-        long_avg = sum(prices) / len(prices)
-        position = portfolio.positions.get(quote.symbol)
-        held_quantity = position.quantity if position else 0
-
-        if portfolio.realized_pnl + portfolio.unrealized_pnl() <= -settings.max_loss:
-            return None
-
-        if short_avg > long_avg * 1.002 and held_quantity == 0:
-            quantity = affordable_quantity(quote.price, settings.max_trade_value, min(settings.budget, portfolio.cash))
-            if quantity <= 0:
-                return None
-            return OrderProposal(
-                symbol=quote.symbol,
-                side=Side.BUY,
-                quantity=quantity,
-                price=quote.price,
-                confidence=min(0.85, 0.55 + abs(short_avg / long_avg - 1.0) * 20),
-                reason="Short-term momentum is above the intraday baseline while no position is open.",
-            )
-
-        if held_quantity > 0 and short_avg < long_avg * 0.998:
-            return OrderProposal(
-                symbol=quote.symbol,
-                side=Side.SELL,
-                quantity=held_quantity,
-                price=quote.price,
-                confidence=min(0.85, 0.55 + abs(short_avg / long_avg - 1.0) * 20),
-                reason="Momentum faded below the intraday baseline, so the strategy proposes exiting.",
-            )
-
-        return None
-
-    # ------------------------------------------------------------------
-    # Multi-symbol scan
+    # Multi-symbol scan  (main entry point called every tick)
     # ------------------------------------------------------------------
 
     def scan(
@@ -136,62 +118,64 @@ class MomentumStrategy:
         self.flush_tick_counts()
 
         signals = [s for quote in quotes if (s := self._signal(quote, portfolio)) is not None]
-        signals.sort(key=lambda item: item.score, reverse=True)
+        signals.sort(key=lambda s: s.score, reverse=True)
 
-        if portfolio.realized_pnl + portfolio.unrealized_pnl() <= -settings.max_loss:
-            return signals, []
+        # Circuit-breaker: no new buys if we've lost too much
+        total_pnl = portfolio.realized_pnl + portfolio.unrealized_pnl()
+        if total_pnl <= -settings.max_loss:
+            return signals[:12], []
 
         proposals: list[OrderProposal] = []
         reserved_cash = 0.0
+        available_cash = portfolio.cash      # trade against ACTUAL cash, not budget cap
 
         for signal in signals:
-            position = portfolio.positions.get(signal.symbol)
-            held_quantity = position.quantity if position else 0
-
-            # Skip if diagnostics say news gate is closed
             if signal.diagnostics and not signal.diagnostics.news_gate:
-                continue
+                continue    # news gate blocked
 
+            position = portfolio.positions.get(signal.symbol)
+            held_quantity = position.quantity if position else 0.0
+
+            # ── SELL ──────────────────────────────────────────────────
+            # Only sell what we actually hold. Never short, never margin.
             if signal.action == "sell" and held_quantity > 0:
-                proposals.append(
-                    OrderProposal(
-                        symbol=signal.symbol,
-                        side=Side.SELL,
-                        quantity=held_quantity,
-                        price=signal.price,
-                        confidence=signal.score,
-                        reason=signal.reason,
-                    )
-                )
+                proposals.append(OrderProposal(
+                    symbol=signal.symbol,
+                    side=Side.SELL,
+                    quantity=held_quantity,          # sell full position
+                    price=signal.price,
+                    confidence=signal.score,
+                    reason=signal.reason,
+                ))
                 continue
 
+            # ── BUY ───────────────────────────────────────────────────
+            # Only buy with cash on hand. Never borrow, never options.
             if signal.action != "buy" or held_quantity > 0:
                 continue
 
-            available_budget = max(0.0, min(settings.budget, portfolio.cash) - reserved_cash)
-            quantity = affordable_quantity(signal.price, settings.max_trade_value, available_budget)
+            spendable = max(0.0, available_cash - reserved_cash)
+            if spendable <= 0:
+                break   # no cash left this cycle
+
+            quantity = affordable_quantity(signal.price, settings.max_trade_value, spendable)
             if quantity <= 0:
                 continue
 
             reserved_cash += quantity * signal.price
-            proposals.append(
-                OrderProposal(
-                    symbol=signal.symbol,
-                    side=Side.BUY,
-                    quantity=quantity,
-                    price=signal.price,
-                    confidence=signal.score,
-                    reason=signal.reason,
-                )
-            )
-
-            if reserved_cash >= settings.budget:
-                break
+            proposals.append(OrderProposal(
+                symbol=signal.symbol,
+                side=Side.BUY,
+                quantity=quantity,
+                price=signal.price,
+                confidence=signal.score,
+                reason=signal.reason,
+            ))
 
         return signals[:12], proposals[:5]
 
     # ------------------------------------------------------------------
-    # Per-symbol signal
+    # Per-symbol signal scoring
     # ------------------------------------------------------------------
 
     def _signal(self, quote: Quote, portfolio: Portfolio) -> Signal | None:
@@ -200,11 +184,8 @@ class MomentumStrategy:
 
         if len(prices) < 8:
             return Signal(
-                symbol=quote.symbol,
-                price=quote.price,
-                score=0.0,
-                action="watch",
-                reason="Collecting enough intraday observations before ranking this symbol.",
+                symbol=quote.symbol, price=quote.price, score=0.0, action="watch",
+                reason="Collecting price history — needs 8 ticks before ranking.",
                 diagnostics=diag,
             )
 
@@ -212,16 +193,15 @@ class MomentumStrategy:
         long_avg = sum(prices) / len(prices)
         momentum = short_avg / long_avg - 1.0
         position = portfolio.positions.get(quote.symbol)
-        held_quantity = position.quantity if position else 0
+        held_quantity = position.quantity if position else 0.0
 
         if held_quantity > 0 and momentum < -0.002:
             return Signal(
-                symbol=quote.symbol,
-                price=quote.price,
+                symbol=quote.symbol, price=quote.price,
                 score=min(0.95, 0.55 + abs(momentum) * 20),
                 action="sell",
                 reason=(
-                    "Momentum weakened versus the intraday baseline; exit is prioritized to protect P&L."
+                    "Momentum fell below intraday baseline — exit to protect P&L."
                     + (f" Volatility {diag.volatility:.1f}%." if diag.volatility else "")
                 ),
                 diagnostics=diag,
@@ -229,23 +209,21 @@ class MomentumStrategy:
 
         if held_quantity == 0 and momentum > 0.002:
             return Signal(
-                symbol=quote.symbol,
-                price=quote.price,
+                symbol=quote.symbol, price=quote.price,
                 score=min(0.95, 0.55 + momentum * 20),
                 action="buy",
                 reason=(
-                    "Positive short-term momentum versus the intraday baseline ranks this as a buy candidate."
-                    + (f" Trend strength {diag.trend_strength:.2f}%." if diag.trend_strength else "")
-                    + (" Volume spike detected." if diag.volume_spike else "")
+                    "Short-term momentum above intraday baseline."
+                    + (f" Trend {diag.trend_strength:.2f}%." if diag.trend_strength else "")
+                    + (" Volume spike." if diag.volume_spike else "")
                 ),
                 diagnostics=diag,
             )
 
         return Signal(
-            symbol=quote.symbol,
-            price=quote.price,
+            symbol=quote.symbol, price=quote.price,
             score=max(0.0, min(0.5, 0.25 + momentum * 10)),
             action="watch",
-            reason="No strong entry or exit edge right now.",
+            reason="Momentum within neutral range — holding off.",
             diagnostics=diag,
         )

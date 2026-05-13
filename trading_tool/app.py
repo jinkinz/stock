@@ -208,7 +208,9 @@ class AppState:
 STATE = AppState()
 
 
-def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float = 0.0) -> dict:
+def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float | None = None) -> dict:
+    if starting_cash is None:
+        starting_cash = STATE.settings.budget
     from .broker import PaperBroker as _PB
     from .strategy import MomentumStrategy as _MS
     bt_broker = _PB(starting_cash=starting_cash)
@@ -247,6 +249,7 @@ class TradingEngine:
     def status(self) -> dict:
         broker = STATE.paper_broker if STATE.settings.trading_mode is TradingMode.PAPER else (STATE.live_broker or STATE.paper_broker)
         portfolio = broker.portfolio()
+        now = datetime.now(timezone.utc).isoformat()
         return {
             "settings": to_json(STATE.settings),
             "portfolio": to_json(portfolio),
@@ -254,6 +257,7 @@ class TradingEngine:
             "last_quotes": to_json(STATE.last_quotes),
             "universe_source": STATE.universe_source,
             "signals": to_json(STATE.signals),
+            "signals_updated_at": STATE.last_tick_at,
             "proposals": to_json(STATE.proposals[-20:]),
             "last_tick_at": STATE.last_tick_at,
             "tick_paused": STATE.tick_paused,
@@ -270,6 +274,10 @@ class TradingEngine:
             STATE.last_quote = quotes[0] if quotes else None
             STATE.last_tick_at = datetime.now(timezone.utc).isoformat()
             STATE.audit(AuditEventType.TICK, detail={"symbols_count": len(symbols), "quotes": len(quotes)})
+
+            # Expire stale proposed entries in manual mode
+            self._expire_stale_proposals()
+
             if STATE.settings.strategy_enabled and self._session_expired():
                 STATE.settings.strategy_enabled = False
                 STATE.close_session()
@@ -367,6 +375,14 @@ class TradingEngine:
             return True
 
     def execute(self, proposal: OrderProposal) -> None:
+        # Hard guard: never trade options or on margin.
+        # We only allow plain BUY (cash) or SELL (held position).
+        # This cannot be overridden by settings.
+        if proposal.side not in (Side.BUY, Side.SELL):
+            proposal.status = OrderStatus.FAILED
+            proposal.error = "Rejected: only plain BUY/SELL of owned shares is permitted. No margin, no options."
+            return
+
         proposal.status = OrderStatus.APPROVED
         try:
             if STATE.settings.trading_mode is TradingMode.LIVE:
@@ -383,6 +399,25 @@ class TradingEngine:
         STATE.audit(event, symbol=proposal.symbol, side=proposal.side.value, quantity=round(proposal.quantity, 6), price=proposal.price, error=proposal.error)
         if STATE.settings.trading_mode is TradingMode.PAPER:
             STATE.log_trade(proposal)
+
+    def _expire_stale_proposals(self) -> None:
+        """In manual mode, auto-expire proposals older than PROPOSAL_TTL_SECONDS."""
+        from .strategy import PROPOSAL_TTL_SECONDS
+        if STATE.settings.approval_mode is ApprovalMode.AUTO:
+            return
+        now = datetime.now(timezone.utc)
+        for proposal in STATE.proposals:
+            if proposal.status is not OrderStatus.PROPOSED:
+                continue
+            try:
+                age = (now - datetime.fromisoformat(proposal.created_at)).total_seconds()
+            except Exception:
+                continue
+            if age > PROPOSAL_TTL_SECONDS:
+                proposal.status = OrderStatus.REJECTED
+                proposal.error = f"Auto-expired after {int(age)}s (manual approval timeout)."
+                STATE.audit(AuditEventType.REJECT, symbol=proposal.symbol,
+                            proposal_id=proposal.id, reason="TTL expired")
 
     def _session_expired(self) -> bool:
         if STATE.settings.started_at is None:
@@ -522,6 +557,30 @@ def auto_tick_loop() -> None:
             time.sleep(10)
 
 
+def quote_refresh_loop() -> None:
+    """Lightweight loop that refreshes prices and signals every 10 s without
+    running the full strategy tick. Keeps AI Ranking / Diagnostics live even
+    when auto_tick is off or between strategy ticks."""
+    while True:
+        try:
+            time.sleep(10)
+            with STATE.lock:
+                if not STATE.last_quotes:
+                    continue  # nothing to refresh yet
+                broker = STATE.broker()
+                symbols = [q.symbol for q in STATE.last_quotes]
+                quotes = broker.quotes(symbols)
+                STATE.last_quotes = quotes
+                STATE.last_quote = quotes[0] if quotes else None
+                # Re-run signals (read-only — no proposals) so rankings stay fresh
+                signals, _ = STATE.strategy.scan(STATE.settings, quotes, broker.portfolio())
+                STATE.signals = signals
+                STATE.last_tick_at = datetime.now(timezone.utc).isoformat()
+                sse_broadcast(ENGINE.status())
+        except Exception:
+            pass
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -575,7 +634,7 @@ class Handler(BaseHTTPRequestHandler):
             p = self._read_json()
             symbols = p.get("symbols") or STATE.settings.active_universe()
             ticks = max(10, min(500, int(p.get("ticks", 60))))
-            cash = float(p.get("starting_cash", 0.0))
+            cash = float(p.get("starting_cash", STATE.settings.budget))
             self._json(run_backtest(symbols, ticks=ticks, starting_cash=cash))
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
@@ -664,6 +723,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     threading.Thread(target=auto_tick_loop, daemon=True).start()
+    threading.Thread(target=quote_refresh_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
     server.daemon_threads = True
     print("Trading tool running at http://127.0.0.1:8765")
