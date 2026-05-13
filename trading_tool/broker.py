@@ -26,29 +26,57 @@ class Broker(Protocol):
 
 
 class PaperBroker:
-    def __init__(self, starting_cash: float = 10000.0, portfolio: Portfolio | None = None, prices: dict[str, float] | None = None) -> None:
+    """Local paper broker. Uses Longbridge real quotes when credentials are
+    available; falls back to a random-walk simulator when they are not."""
+
+    def __init__(
+        self,
+        starting_cash: float = 10000.0,
+        portfolio: Portfolio | None = None,
+        prices: dict[str, float] | None = None,
+    ) -> None:
         self._portfolio = portfolio or Portfolio(cash=starting_cash)
         self._prices: dict[str, float] = prices or {}
+        self._lb: LongbridgeBroker | None = None
+        # Try to attach a Longbridge quote context so paper trades use real prices.
+        try:
+            self._lb = LongbridgeBroker()
+        except Exception:
+            self._lb = None
+
+    # ------------------------------------------------------------------
+    # Quote helpers
+    # ------------------------------------------------------------------
 
     def quote(self, symbol: str) -> Quote:
-        previous = self._prices.get(symbol)
-        if previous is None:
-            previous = self._seed_price(symbol)
-        drift = random.uniform(-0.008, 0.008)
-        price = max(1.0, previous * (1.0 + drift))
-        self._prices[symbol] = round(price, 2)
-        self._portfolio.last_prices[symbol] = self._prices[symbol]
-        return Quote(
-            symbol=symbol,
-            price=self._prices[symbol],
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            source="paper",
-        )
+        if self._lb is not None:
+            try:
+                q = self._lb.quote(symbol)
+                self._prices[symbol] = q.price
+                self._portfolio.last_prices[symbol] = q.price
+                return Quote(symbol=symbol, price=q.price, timestamp=q.timestamp, source="longbridge-paper")
+            except Exception:
+                pass
+        return self._simulated_quote(symbol)
 
     def quotes(self, symbols: list[str]) -> list[Quote]:
-        return [self.quote(symbol) for symbol in symbols]
+        if self._lb is not None:
+            try:
+                qs = self._lb.quotes(symbols)
+                for q in qs:
+                    self._prices[q.symbol] = q.price
+                    self._portfolio.last_prices[q.symbol] = q.price
+                return [Quote(symbol=q.symbol, price=q.price, timestamp=q.timestamp, source="longbridge-paper") for q in qs]
+            except Exception:
+                pass
+        return [self._simulated_quote(s) for s in symbols]
 
     def discover_symbols(self, markets: list[str]) -> list[str]:
+        if self._lb is not None:
+            try:
+                return self._lb.discover_symbols(markets)
+            except Exception:
+                pass
         return []
 
     def submit_order(self, proposal: OrderProposal) -> OrderProposal:
@@ -88,11 +116,33 @@ class PaperBroker:
             "portfolio": {
                 "cash": self._portfolio.cash,
                 "realized_pnl": self._portfolio.realized_pnl,
-                "positions": {symbol: {"symbol": pos.symbol, "quantity": pos.quantity, "avg_cost": pos.avg_cost} for symbol, pos in self._portfolio.positions.items()},
+                "positions": {
+                    symbol: {"symbol": pos.symbol, "quantity": pos.quantity, "avg_cost": pos.avg_cost}
+                    for symbol, pos in self._portfolio.positions.items()
+                },
                 "last_prices": self._portfolio.last_prices,
             },
             "prices": self._prices,
         }
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _simulated_quote(self, symbol: str) -> Quote:
+        previous = self._prices.get(symbol)
+        if previous is None:
+            previous = self._seed_price(symbol)
+        drift = random.uniform(-0.008, 0.008)
+        price = max(1.0, previous * (1.0 + drift))
+        self._prices[symbol] = round(price, 2)
+        self._portfolio.last_prices[symbol] = self._prices[symbol]
+        return Quote(
+            symbol=symbol,
+            price=self._prices[symbol],
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            source="paper-sim",
+        )
 
     def _seed_price(self, symbol: str) -> float:
         if symbol.endswith(".HK"):
@@ -106,9 +156,20 @@ class LongbridgeBroker:
     def __init__(self) -> None:
         try:
             from decimal import Decimal
-            from longbridge.openapi import Config, Market, OrderSide, OrderType, QuoteContext, SecurityListCategory, TimeInForceType, TradeContext
+            from longbridge.openapi import (
+                Config,
+                Market,
+                OrderSide,
+                OrderType,
+                QuoteContext,
+                SecurityListCategory,
+                TimeInForceType,
+                TradeContext,
+            )
         except ImportError as exc:
-            raise RuntimeError("Install the Longbridge SDK with `pip install longbridge` before using live mode.") from exc
+            raise RuntimeError(
+                "Install the Longbridge SDK with `pip install longbridge` before using live mode."
+            ) from exc
 
         self.Decimal = Decimal
         self.Market = Market
@@ -121,6 +182,10 @@ class LongbridgeBroker:
         self.trade_ctx = TradeContext(config)
         self._portfolio = Portfolio(cash=0.0)
 
+    # ------------------------------------------------------------------
+    # Quotes
+    # ------------------------------------------------------------------
+
     def quote(self, symbol: str) -> Quote:
         quotes = self.quote_ctx.quote([symbol])
         first = quotes[0]
@@ -132,13 +197,13 @@ class LongbridgeBroker:
         if not symbols:
             return []
         responses = self.quote_ctx.quote(symbols)
-        quotes: list[Quote] = []
+        result: list[Quote] = []
         for item in responses:
             price = float(item.last_done)
             symbol = item.symbol
             self._portfolio.last_prices[symbol] = price
-            quotes.append(Quote(symbol=symbol, price=price, timestamp=datetime.now(timezone.utc).isoformat(), source="longbridge"))
-        return quotes
+            result.append(Quote(symbol=symbol, price=price, timestamp=datetime.now(timezone.utc).isoformat(), source="longbridge"))
+        return result
 
     def discover_symbols(self, markets: list[str]) -> list[str]:
         symbols: list[str] = []
@@ -154,6 +219,10 @@ class LongbridgeBroker:
                 symbols.append(symbol)
         return list(dict.fromkeys(symbols))
 
+    # ------------------------------------------------------------------
+    # Orders
+    # ------------------------------------------------------------------
+
     def submit_order(self, proposal: OrderProposal) -> OrderProposal:
         side = self.OrderSide.Buy if proposal.side is Side.BUY else self.OrderSide.Sell
         self.trade_ctx.submit_order(
@@ -167,14 +236,41 @@ class LongbridgeBroker:
         )
         return proposal
 
+    # ------------------------------------------------------------------
+    # Portfolio — full sync from Longbridge
+    # ------------------------------------------------------------------
+
     def portfolio(self) -> Portfolio:
-        balances = self.trade_ctx.account_balance()
-        cash = 0.0
-        for balance in balances:
-            for info in getattr(balance, "cash_infos", []) or []:
-                if getattr(info, "currency", "") == "USD":
-                    cash += float(getattr(info, "available_cash", 0) or 0)
-        self._portfolio.cash = round(cash, 2)
+        """Sync cash and stock positions from Longbridge account."""
+        # --- cash ---
+        try:
+            balances = self.trade_ctx.account_balance()
+            cash = 0.0
+            for balance in balances:
+                for info in getattr(balance, "cash_infos", []) or []:
+                    if getattr(info, "currency", "") == "USD":
+                        cash += float(getattr(info, "available_cash", 0) or 0)
+            self._portfolio.cash = round(cash, 2)
+        except Exception:
+            pass
+
+        # --- stock positions ---
+        try:
+            resp = self.trade_ctx.stock_positions()
+            channels = getattr(resp, "channels", None) or []
+            synced: dict[str, Position] = {}
+            for channel in channels:
+                for pos in getattr(channel, "positions", []) or []:
+                    symbol = getattr(pos, "symbol", None)
+                    qty = int(getattr(pos, "quantity", 0) or 0)
+                    cost_price = float(getattr(pos, "cost_price", 0) or 0)
+                    if symbol and qty > 0:
+                        synced[symbol] = Position(symbol=symbol, quantity=qty, avg_cost=cost_price)
+            if synced:
+                self._portfolio.positions = synced
+        except Exception:
+            pass
+
         return self._portfolio
 
 

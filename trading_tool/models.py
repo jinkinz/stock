@@ -51,8 +51,8 @@ class Settings:
 
     def normalized(self) -> "Settings":
         self.symbol = self.symbol.strip().upper()
-        self.markets = [market.strip().upper() for market in self.markets if market.strip()]
-        self.universe = [symbol.strip().upper() for symbol in self.universe if symbol.strip()]
+        self.markets = [m.strip().upper() for m in self.markets if m.strip()]
+        self.universe = [s.strip().upper() for s in self.universe if s.strip()]
         if not self.markets:
             self.markets = ["US"]
         self.budget = max(0.0, float(self.budget))
@@ -88,12 +88,25 @@ class Quote:
 
 
 @dataclass
+class Diagnostics:
+    """Richer per-symbol metrics computed alongside each scan."""
+    symbol: str
+    price: float
+    volatility: float = 0.0          # std-dev of recent returns (annualised approx)
+    spread_pct: float = 0.0          # synthetic bid-ask spread estimate
+    volume_spike: bool = False        # True when recent tick-count is >2× baseline
+    trend_strength: float = 0.0      # abs(short_avg/long_avg - 1) × 100
+    news_gate: bool = True            # True = OK to trade; False = news blackout (stub)
+
+
+@dataclass
 class Signal:
     symbol: str
     price: float
     score: float
     action: str
     reason: str
+    diagnostics: Diagnostics | None = None
 
 
 @dataclass
@@ -122,7 +135,10 @@ class Portfolio:
     last_prices: dict[str, float] = field(default_factory=dict)
 
     def equity(self) -> float:
-        holdings = sum(pos.quantity * self.last_prices.get(symbol, pos.avg_cost) for symbol, pos in self.positions.items())
+        holdings = sum(
+            pos.quantity * self.last_prices.get(symbol, pos.avg_cost)
+            for symbol, pos in self.positions.items()
+        )
         return round(self.cash + holdings, 2)
 
     def unrealized_pnl(self) -> float:
@@ -130,6 +146,28 @@ class Portfolio:
         for symbol, pos in self.positions.items():
             pnl += pos.quantity * (self.last_prices.get(symbol, pos.avg_cost) - pos.avg_cost)
         return round(pnl, 2)
+
+
+# ---------------------------------------------------------------------------
+# Audit log
+# ---------------------------------------------------------------------------
+
+class AuditEventType(str, Enum):
+    SIGNAL = "signal"
+    PROPOSAL = "proposal"
+    APPROVE = "approve"
+    REJECT = "reject"
+    FILL = "fill"
+    FAIL = "fail"
+    TICK = "tick"
+
+
+@dataclass
+class AuditEntry:
+    event: AuditEventType
+    at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    symbol: str | None = None
+    detail: dict = field(default_factory=dict)
 
 
 DEFAULT_UNIVERSES = {

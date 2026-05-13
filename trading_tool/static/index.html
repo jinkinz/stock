@@ -13,7 +13,11 @@
           <h1>Trading Tool</h1>
           <p id="marketLine">Paper mode, waiting for data</p>
         </div>
-        <button id="tickButton" class="primary">Run Tick</button>
+        <div class="topbar-actions">
+          <button id="tickButton" class="primary">Run Tick</button>
+          <button id="pauseButton" class="danger-btn">Stop Auto-Tick</button>
+          <button id="backtestButton" class="secondary">Run Backtest</button>
+        </div>
       </section>
 
       <section class="grid">
@@ -124,6 +128,14 @@
             <span>Last Tick</span>
             <strong id="lastTick">Never</strong>
           </div>
+          <div class="metric" id="pauseMetric">
+            <span>Auto-Tick</span>
+            <strong id="pauseStatus">Running</strong>
+          </div>
+          <div class="metric">
+            <span>Quote Source</span>
+            <strong id="quoteSource">—</strong>
+          </div>
         </section>
       </section>
 
@@ -146,6 +158,24 @@
       <section class="panel">
         <h2>Trade Proposals</h2>
         <div id="proposals" class="empty">No proposals yet</div>
+      </section>
+
+      <section class="panel">
+        <h2>Diagnostics <span class="hint-inline">(volatility · spread · trend · volume)</span></h2>
+        <div id="diagnostics" class="empty">No diagnostics yet</div>
+      </section>
+
+      <section class="panel" id="backtestPanel" style="display:none">
+        <h2>Backtest Results</h2>
+        <div id="backtestResult"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header-row">
+          <h2>Audit Log</h2>
+          <button id="refreshAudit" class="secondary small">Refresh</button>
+        </div>
+        <div id="auditLog" class="empty">No audit entries yet</div>
       </section>
     </main>
     <script src="/static/app.js"></script>

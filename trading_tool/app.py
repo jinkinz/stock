@@ -10,7 +10,19 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .broker import LongbridgeBroker, PaperBroker
-from .models import ApprovalMode, OrderProposal, OrderStatus, Portfolio, Position, Settings, Side, TradingMode, to_json
+from .models import (
+    ApprovalMode,
+    AuditEntry,
+    AuditEventType,
+    OrderProposal,
+    OrderStatus,
+    Portfolio,
+    Position,
+    Settings,
+    Side,
+    TradingMode,
+    to_json,
+)
 from .strategy import MomentumStrategy
 
 ROOT = Path(__file__).resolve().parent
@@ -18,6 +30,8 @@ STATIC = ROOT / "static"
 STATE_DIR = ROOT / "state"
 STATE_FILE = STATE_DIR / "paper_state.json"
 TRADE_LOG = STATE_DIR / "trade_log.jsonl"
+AUDIT_LOG = STATE_DIR / "audit_log.jsonl"
+BACKTEST_LOG = STATE_DIR / "backtest_log.jsonl"
 
 
 class AppState:
@@ -32,6 +46,9 @@ class AppState:
         self.signals = []
         self.universe_source = "sample"
         self.last_tick_at: str | None = None
+        # Kill switch: when True the auto-tick loop skips ticking even if
+        # auto_tick_enabled is True.  The Run Tick button bypasses this.
+        self.tick_paused: bool = False
         self.lock = threading.RLock()
         self.load()
 
@@ -41,6 +58,10 @@ class AppState:
                 self.live_broker = LongbridgeBroker()
             return self.live_broker
         return self.paper_broker
+
+    # ------------------------------------------------------------------
+    # Persist / load
+    # ------------------------------------------------------------------
 
     def load(self) -> None:
         if not STATE_FILE.exists():
@@ -60,18 +81,26 @@ class AppState:
             paper = data.get("paper", {})
             portfolio_data = paper.get("portfolio", {})
             positions = {
-                symbol: Position(symbol=pos.get("symbol", symbol), quantity=int(pos.get("quantity", 0)), avg_cost=float(pos.get("avg_cost", 0)))
+                symbol: Position(
+                    symbol=pos.get("symbol", symbol),
+                    quantity=int(pos.get("quantity", 0)),
+                    avg_cost=float(pos.get("avg_cost", 0)),
+                )
                 for symbol, pos in portfolio_data.get("positions", {}).items()
             }
             portfolio = Portfolio(
                 cash=float(portfolio_data.get("cash", 10000.0)),
                 realized_pnl=float(portfolio_data.get("realized_pnl", 0.0)),
                 positions=positions,
-                last_prices={symbol: float(price) for symbol, price in portfolio_data.get("last_prices", {}).items()},
+                last_prices={
+                    symbol: float(price)
+                    for symbol, price in portfolio_data.get("last_prices", {}).items()
+                },
             )
             prices = {symbol: float(price) for symbol, price in paper.get("prices", {}).items()}
             self.paper_broker = PaperBroker(portfolio=portfolio, prices=prices)
             self.last_tick_at = data.get("last_tick_at")
+            self.tick_paused = bool(data.get("tick_paused", False))
             self.proposals = [self._proposal_from_json(item) for item in data.get("proposals", [])]
         except Exception:
             return
@@ -83,8 +112,19 @@ class AppState:
             "paper": self.paper_broker.snapshot(),
             "proposals": to_json(self.proposals[-200:]),
             "last_tick_at": self.last_tick_at,
+            "tick_paused": self.tick_paused,
         }
         STATE_FILE.write_text(json.dumps(payload, indent=2))
+
+    # ------------------------------------------------------------------
+    # Audit logging
+    # ------------------------------------------------------------------
+
+    def audit(self, event: AuditEventType, symbol: str | None = None, **detail) -> None:
+        STATE_DIR.mkdir(exist_ok=True)
+        entry = AuditEntry(event=event, symbol=symbol, detail=detail)
+        with AUDIT_LOG.open("a") as handle:
+            handle.write(json.dumps(to_json(entry)) + "\n")
 
     def log_trade(self, proposal: OrderProposal) -> None:
         STATE_DIR.mkdir(exist_ok=True)
@@ -114,9 +154,79 @@ class AppState:
 STATE = AppState()
 
 
+# ---------------------------------------------------------------------------
+# Backtest helper
+# ---------------------------------------------------------------------------
+
+def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float = 10000.0) -> dict:
+    """Run a fast deterministic backtest using the paper price simulator.
+
+    Simulates `ticks` price ticks per symbol using the random-walk model,
+    then replays the MomentumStrategy and records equity at each step.
+    Returns a summary and per-tick equity curve.
+    """
+    from .broker import PaperBroker as _PB
+    from .strategy import MomentumStrategy as _MS
+
+    bt_broker = _PB(starting_cash=starting_cash)
+    bt_strategy = _MS()
+    settings = Settings(
+        budget=starting_cash,
+        max_trade_value=starting_cash / max(1, len(symbols)),
+        max_loss=starting_cash * 0.10,
+        approval_mode=ApprovalMode.AUTO,
+        strategy_enabled=True,
+    )
+    equity_curve: list[dict] = []
+    trades: list[dict] = []
+
+    for tick_i in range(ticks):
+        quotes = bt_broker.quotes(symbols)
+        portfolio = bt_broker.portfolio()
+        signals, proposals = bt_strategy.scan(settings, quotes, portfolio)
+
+        for proposal in proposals:
+            pending = {(p.symbol, p.side) for p in [] if p.status is OrderStatus.PROPOSED}
+            if (proposal.symbol, proposal.side) in pending:
+                continue
+            bt_broker.submit_order(proposal)
+            trades.append({"tick": tick_i, "trade": to_json(proposal)})
+
+        equity_curve.append({"tick": tick_i, "equity": bt_broker.portfolio().equity()})
+
+    final_portfolio = bt_broker.portfolio()
+    result = {
+        "symbols": symbols,
+        "ticks": ticks,
+        "starting_cash": starting_cash,
+        "final_equity": final_portfolio.equity(),
+        "realized_pnl": final_portfolio.realized_pnl,
+        "unrealized_pnl": final_portfolio.unrealized_pnl(),
+        "total_trades": len(trades),
+        "equity_curve": equity_curve,
+        "trades": trades[-50:],
+        "ran_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # persist
+    STATE_DIR.mkdir(exist_ok=True)
+    with BACKTEST_LOG.open("a") as f:
+        f.write(json.dumps(result) + "\n")
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Trading engine
+# ---------------------------------------------------------------------------
+
 class TradingEngine:
     def status(self) -> dict:
-        broker = STATE.paper_broker if STATE.settings.trading_mode is TradingMode.PAPER else (STATE.live_broker or STATE.paper_broker)
+        broker = (
+            STATE.paper_broker
+            if STATE.settings.trading_mode is TradingMode.PAPER
+            else (STATE.live_broker or STATE.paper_broker)
+        )
         return {
             "settings": to_json(STATE.settings),
             "portfolio": to_json(broker.portfolio()),
@@ -126,6 +236,7 @@ class TradingEngine:
             "signals": to_json(STATE.signals),
             "proposals": to_json(STATE.proposals[-20:]),
             "last_tick_at": STATE.last_tick_at,
+            "tick_paused": STATE.tick_paused,
         }
 
     def tick(self) -> dict:
@@ -137,6 +248,8 @@ class TradingEngine:
             STATE.last_quote = quotes[0] if quotes else None
             STATE.last_tick_at = datetime.now(timezone.utc).isoformat()
 
+            STATE.audit(AuditEventType.TICK, detail={"symbols": symbols, "count": len(quotes)})
+
             if STATE.settings.strategy_enabled and self._session_expired():
                 STATE.settings.strategy_enabled = False
                 if STATE.settings.stop_at_end:
@@ -145,12 +258,36 @@ class TradingEngine:
             if STATE.settings.strategy_enabled:
                 signals, proposals = STATE.strategy.scan(STATE.settings, quotes, broker.portfolio())
                 STATE.signals = signals
-                pending = {(item.symbol, item.side) for item in STATE.proposals if item.status is OrderStatus.PROPOSED}
+
+                # Audit every signal
+                for sig in signals:
+                    STATE.audit(
+                        AuditEventType.SIGNAL,
+                        symbol=sig.symbol,
+                        action=sig.action,
+                        score=sig.score,
+                        price=sig.price,
+                        reason=sig.reason,
+                    )
+
+                pending = {
+                    (item.symbol, item.side)
+                    for item in STATE.proposals
+                    if item.status is OrderStatus.PROPOSED
+                }
                 for proposal in proposals:
                     if (proposal.symbol, proposal.side) in pending:
                         continue
                     STATE.proposals.append(proposal)
                     pending.add((proposal.symbol, proposal.side))
+                    STATE.audit(
+                        AuditEventType.PROPOSAL,
+                        symbol=proposal.symbol,
+                        side=proposal.side.value,
+                        quantity=proposal.quantity,
+                        price=proposal.price,
+                        confidence=proposal.confidence,
+                    )
                     if STATE.settings.approval_mode is ApprovalMode.AUTO:
                         self.execute(proposal)
             else:
@@ -164,9 +301,9 @@ class TradingEngine:
         with STATE.lock:
             settings = STATE.settings
             for key in (
-                "symbol", "markets", "universe", "budget", "duration_minutes", "max_scan_symbols",
-                "max_loss", "max_trade_value", "auto_tick_enabled", "tick_interval_seconds",
-                "allow_live_trading", "stop_at_end", "strategy_enabled",
+                "symbol", "markets", "universe", "budget", "duration_minutes",
+                "max_scan_symbols", "max_loss", "max_trade_value", "auto_tick_enabled",
+                "tick_interval_seconds", "allow_live_trading", "stop_at_end", "strategy_enabled",
             ):
                 if key in payload:
                     setattr(settings, key, payload[key])
@@ -182,11 +319,24 @@ class TradingEngine:
             STATE.save()
             return self.status()
 
+    def pause_tick(self) -> dict:
+        with STATE.lock:
+            STATE.tick_paused = True
+            STATE.save()
+            return self.status()
+
+    def resume_tick(self) -> dict:
+        with STATE.lock:
+            STATE.tick_paused = False
+            STATE.save()
+            return self.status()
+
     def approve(self, proposal_id: str) -> bool:
         with STATE.lock:
             proposal = self._find_proposal(proposal_id)
             if proposal is None:
                 return False
+            STATE.audit(AuditEventType.APPROVE, symbol=proposal.symbol, proposal_id=proposal_id)
             self.execute(proposal)
             STATE.save()
             return True
@@ -197,6 +347,7 @@ class TradingEngine:
             if proposal is None:
                 return False
             proposal.status = OrderStatus.REJECTED
+            STATE.audit(AuditEventType.REJECT, symbol=proposal.symbol, proposal_id=proposal_id)
             STATE.save()
             return True
 
@@ -210,8 +361,23 @@ class TradingEngine:
         except Exception as exc:
             proposal.status = OrderStatus.FAILED
             proposal.error = str(exc)
+
+        event = AuditEventType.FILL if proposal.status is OrderStatus.FILLED else AuditEventType.FAIL
+        STATE.audit(
+            event,
+            symbol=proposal.symbol,
+            side=proposal.side.value,
+            quantity=proposal.quantity,
+            price=proposal.price,
+            error=proposal.error,
+        )
+
         if STATE.settings.trading_mode is TradingMode.PAPER:
             STATE.log_trade(proposal)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _session_expired(self) -> bool:
         if STATE.settings.started_at is None:
@@ -228,7 +394,7 @@ class TradingEngine:
         if STATE.settings.trading_mode is TradingMode.LIVE:
             discovered = broker.discover_symbols(STATE.settings.markets)
             if discovered:
-                unsupported = [market for market in STATE.settings.markets if market != "US"]
+                unsupported = [m for m in STATE.settings.markets if m != "US"]
                 source = "Longbridge security list"
                 if unsupported:
                     source += f" + sample fallback for {', '.join(unsupported)}"
@@ -261,22 +427,34 @@ class TradingEngine:
                 self.execute(proposal)
 
     def _find_proposal(self, proposal_id: str):
-        return next((proposal for proposal in STATE.proposals if proposal.id == proposal_id), None)
+        return next((p for p in STATE.proposals if p.id == proposal_id), None)
 
 
 ENGINE = TradingEngine()
 
 
+# ---------------------------------------------------------------------------
+# Auto-tick loop
+# ---------------------------------------------------------------------------
+
 def auto_tick_loop() -> None:
     while True:
         try:
-            should_tick = STATE.settings.auto_tick_enabled and STATE.settings.strategy_enabled
+            should_tick = (
+                STATE.settings.auto_tick_enabled
+                and STATE.settings.strategy_enabled
+                and not STATE.tick_paused
+            )
             if should_tick:
                 ENGINE.tick()
             time.sleep(max(5, STATE.settings.tick_interval_seconds))
         except Exception:
             time.sleep(10)
 
+
+# ---------------------------------------------------------------------------
+# HTTP handler
+# ---------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
@@ -290,6 +468,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tick":
             self._json(ENGINE.tick())
             return
+        if path == "/api/tick/pause":
+            self._json(ENGINE.pause_tick())
+            return
+        if path == "/api/tick/resume":
+            self._json(ENGINE.resume_tick())
+            return
+        if path == "/api/audit":
+            self._serve_jsonl_tail(AUDIT_LOG, 100)
+            return
+        if path == "/api/backtest/last":
+            self._serve_jsonl_tail(BACKTEST_LOG, 1)
+            return
         if path.startswith("/static/"):
             target = STATIC / path.removeprefix("/static/")
             content_type = "text/css" if target.suffix == ".css" else "application/javascript"
@@ -301,6 +491,12 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/settings":
             self._json(ENGINE.update_settings(self._read_json()))
+            return
+        if path == "/api/tick/pause":
+            self._json(ENGINE.pause_tick())
+            return
+        if path == "/api/tick/resume":
+            self._json(ENGINE.resume_tick())
             return
         if path.startswith("/api/proposals/") and path.endswith("/approve"):
             proposal_id = path.split("/")[3]
@@ -315,6 +511,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             self._json(ENGINE.status())
+            return
+        if path == "/api/backtest":
+            payload = self._read_json()
+            symbols = payload.get("symbols") or STATE.settings.active_universe()
+            ticks = max(10, min(500, int(payload.get("ticks", 60))))
+            starting_cash = float(payload.get("starting_cash", 10000.0))
+            result = run_backtest(symbols, ticks=ticks, starting_cash=starting_cash)
+            self._json(result)
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -334,6 +538,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _serve_jsonl_tail(self, path: Path, n: int) -> None:
+        if not path.exists():
+            self._json({"entries": []})
+            return
+        lines = path.read_text().strip().splitlines()
+        entries = [json.loads(line) for line in lines[-n:] if line.strip()]
+        self._json({"entries": entries})
 
     def _send_file(self, path: Path, content_type: str) -> None:
         if not path.exists() or not path.is_file():
