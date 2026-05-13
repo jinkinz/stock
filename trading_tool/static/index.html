@@ -8,6 +8,7 @@
   </head>
   <body>
     <main class="shell">
+
       <section class="topbar">
         <div>
           <h1>Trading Tool <span id="liveDot" class="live-dot" title="Connecting…"></span></h1>
@@ -17,6 +18,7 @@
           <button id="tickButton" class="primary">Run Tick</button>
           <button id="pauseButton" class="danger-btn">Stop Auto-Tick</button>
           <button id="backtestButton" class="secondary">Run Backtest</button>
+          <button id="resetPaperButton" class="secondary">Reset Paper</button>
         </div>
       </section>
 
@@ -30,138 +32,72 @@
               <label class="chip"><input name="markets" type="checkbox" value="SG" /><span>SG</span></label>
             </div>
           </div>
-
           <div class="field">
             <label for="universe">Custom Universe</label>
-            <textarea id="universe" name="universe" rows="4" placeholder="Optional: enter symbols to restrict the scan, e.g. AAPL.US, 700.HK, D05.SG"></textarea>
+            <textarea id="universe" name="universe" rows="3" placeholder="AAPL.US, 700.HK, D05.SG — blank = scan all markets"></textarea>
             <p class="hint" id="universeSource">Blank uses discovery where available, then sample fallback.</p>
           </div>
-
           <div class="split">
-            <div class="field">
-              <label for="budget">Budget</label>
-              <input id="budget" name="budget" type="number" min="0" step="10" value="1000" />
-            </div>
-            <div class="field">
-              <label for="duration_minutes">Duration</label>
-              <input id="duration_minutes" name="duration_minutes" type="number" min="1" step="1" value="390" />
-            </div>
+            <div class="field"><label for="budget">Budget ($)</label>
+              <input id="budget" name="budget" type="number" min="0" step="10" value="1000" /></div>
+            <div class="field"><label for="duration_minutes">Duration (min)</label>
+              <input id="duration_minutes" name="duration_minutes" type="number" min="1" step="1" value="390" /></div>
           </div>
-
           <div class="field">
             <label for="max_scan_symbols">Max Symbols Per Scan <span class="hint-inline">(0 = unlimited)</span></label>
             <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="0" max="500" step="1" value="0" />
           </div>
-
           <div class="split">
-            <div class="field">
-              <label for="max_loss">Max Loss</label>
-              <input id="max_loss" name="max_loss" type="number" min="0" step="1" value="25" />
-            </div>
-            <div class="field">
-              <label for="max_trade_value">Max Trade</label>
-              <input id="max_trade_value" name="max_trade_value" type="number" min="0" step="10" value="250" />
-            </div>
+            <div class="field"><label for="max_loss">Max Loss ($)</label>
+              <input id="max_loss" name="max_loss" type="number" min="0" step="1" value="25" /></div>
+            <div class="field"><label for="max_trade_value">Max Trade ($)</label>
+              <input id="max_trade_value" name="max_trade_value" type="number" min="0" step="10" value="250" /></div>
           </div>
-
-          <div class="field">
-            <label>Trading Mode</label>
+          <div class="field"><label>Trading Mode</label>
             <div class="segmented" data-name="trading_mode">
               <button type="button" data-value="paper" class="active">Paper</button>
               <button type="button" data-value="live">Live</button>
             </div>
           </div>
-
-          <div class="field">
-            <label>Approval</label>
+          <div class="field"><label>Approval</label>
             <div class="segmented" data-name="approval_mode">
               <button type="button" data-value="manual" class="active">Manual</button>
               <button type="button" data-value="auto">Auto</button>
             </div>
           </div>
-
-          <label class="toggle">
-            <input id="strategy_enabled" name="strategy_enabled" type="checkbox" />
-            <span>Strategy running</span>
-          </label>
-
-          <label class="toggle">
-            <input id="auto_tick_enabled" name="auto_tick_enabled" type="checkbox" />
-            <span>Auto paper scan</span>
-          </label>
-
-          <div class="field">
-            <label for="tick_interval_seconds">Scan Interval Seconds</label>
-            <input id="tick_interval_seconds" name="tick_interval_seconds" type="number" min="5" step="5" value="60" />
-          </div>
-
-          <label class="toggle danger">
-            <input id="allow_live_trading" name="allow_live_trading" type="checkbox" />
-            <span>Allow live order submission</span>
-          </label>
-
+          <label class="toggle"><input id="strategy_enabled" name="strategy_enabled" type="checkbox" /><span>Strategy running</span></label>
+          <label class="toggle"><input id="auto_tick_enabled" name="auto_tick_enabled" type="checkbox" /><span>Auto scan</span></label>
+          <div class="field"><label for="tick_interval_seconds">Scan Interval (s)</label>
+            <input id="tick_interval_seconds" name="tick_interval_seconds" type="number" min="5" step="5" value="60" /></div>
+          <label class="toggle danger"><input id="allow_live_trading" name="allow_live_trading" type="checkbox" /><span>Allow live order submission</span></label>
           <button class="primary wide" type="submit">Save Settings</button>
         </form>
 
         <section class="panel metrics">
-          <div class="metric">
-            <span>Cash</span>
-            <strong id="cash">$0.00</strong>
-          </div>
-          <div class="metric">
-            <span>Equity</span>
-            <strong id="equity">$0.00</strong>
-          </div>
-          <div class="metric">
-            <span>Realized P&L</span>
-            <strong id="realized">$0.00</strong>
-          </div>
-          <div class="metric">
-            <span>Unrealized P&L</span>
-            <strong id="unrealized">$0.00</strong>
-          </div>
-          <div class="metric">
-            <span>Scanned</span>
-            <strong id="scanned">0</strong>
-          </div>
-          <div class="metric">
-            <span>Last Tick</span>
-            <strong id="lastTick">Never</strong>
-          </div>
-          <div class="metric" id="pauseMetric">
-            <span>Auto-Tick</span>
-            <strong id="pauseStatus">Running</strong>
-          </div>
-          <div class="metric">
-            <span>Quote Source</span>
-            <strong id="quoteSource">—</strong>
-          </div>
+          <div class="metric"><span>Cash</span><strong id="cash">$0.00</strong></div>
+          <div class="metric"><span>Equity</span><strong id="equity">$0.00</strong></div>
+          <div class="metric"><span>Realized P&L</span><strong id="realized">$0.00</strong></div>
+          <div class="metric"><span>Unrealized P&L</span><strong id="unrealized">$0.00</strong></div>
+          <div class="metric"><span>Session P&L</span><strong id="sessionPnl">$0.00</strong></div>
+          <div class="metric"><span>Session Start</span><strong id="sessionStart">—</strong></div>
+          <div class="metric"><span>Scanned</span><strong id="scanned">0</strong></div>
+          <div class="metric"><span>Last Tick</span><strong id="lastTick">Never</strong></div>
+          <div class="metric" id="pauseMetric"><span>Auto-Tick</span><strong id="pauseStatus">Running</strong></div>
+          <div class="metric"><span>Quote Source</span><strong id="quoteSource">—</strong></div>
         </section>
       </section>
 
       <section class="columns">
-        <section class="panel">
-          <h2>Market Scan</h2>
-          <div id="quote" class="empty">No quote yet</div>
-        </section>
-        <section class="panel">
-          <h2>Positions</h2>
-          <div id="positions" class="empty">No positions</div>
-        </section>
+        <section class="panel"><h2>Market Scan</h2><div id="quote" class="empty">No quote yet</div></section>
+        <section class="panel"><h2>Positions</h2><div id="positions" class="empty">No positions</div></section>
       </section>
 
-      <section class="panel">
-        <h2>AI Ranking</h2>
-        <div id="signals" class="empty">No scan yet</div>
-      </section>
+      <section class="panel"><h2>AI Ranking</h2><div id="signals" class="empty">No scan yet</div></section>
+
+      <section class="panel"><h2>Trade Proposals</h2><div id="proposals" class="empty">No proposals yet</div></section>
 
       <section class="panel">
-        <h2>Trade Proposals</h2>
-        <div id="proposals" class="empty">No proposals yet</div>
-      </section>
-
-      <section class="panel">
-        <h2>Diagnostics <span class="hint-inline">(volatility · spread · trend · volume)</span></h2>
+        <h2>Diagnostics <span class="hint-inline">volatility · spread · trend · volume</span></h2>
         <div id="diagnostics" class="empty">No diagnostics yet</div>
       </section>
 
@@ -172,11 +108,24 @@
 
       <section class="panel">
         <div class="panel-header-row">
-          <h2>Audit Log</h2>
-          <button id="refreshAudit" class="secondary small">Refresh</button>
+          <h2>Session History <span class="hint-inline">P&L per trading session</span></h2>
+          <button id="sessionsTab" class="secondary small">Load Sessions</button>
         </div>
-        <div id="auditLog" class="empty">No audit entries yet</div>
+        <div style="overflow-x:auto">
+          <table class="diag-table" style="min-width:560px">
+            <thead><tr><th>Start</th><th>End</th><th>Start Equity</th><th>End Equity</th><th>Session P&L</th></tr></thead>
+            <tbody id="sessionsBody"><tr><td colspan="5" class="empty" style="padding:12px;color:var(--muted)">Click "Load Sessions" to view history</td></tr></tbody>
+          </table>
+        </div>
       </section>
+
+      <section class="panel">
+        <div class="panel-header-row">
+          <h2>Audit Log <span class="hint-inline">live · last 80 events</span></h2>
+        </div>
+        <div id="auditLog" class="empty">Connecting…</div>
+      </section>
+
     </main>
     <script src="/static/app.js"></script>
   </body>

@@ -33,6 +33,35 @@ STATE_FILE = STATE_DIR / "paper_state.json"
 TRADE_LOG = STATE_DIR / "trade_log.jsonl"
 AUDIT_LOG = STATE_DIR / "audit_log.jsonl"
 BACKTEST_LOG = STATE_DIR / "backtest_log.jsonl"
+SESSIONS_LOG = STATE_DIR / "sessions_log.jsonl"
+
+
+class TradingRateLimiter:
+    MAX_CALLS = 30
+    WINDOW_SECONDS = 30.0
+    MIN_GAP = 0.02
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._call_times: list[float] = []
+        self._last_call: float = 0.0
+
+    def acquire(self, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                self._call_times = [t for t in self._call_times if now - t < self.WINDOW_SECONDS]
+                if (now - self._last_call) >= self.MIN_GAP and len(self._call_times) < self.MAX_CALLS:
+                    self._call_times.append(now)
+                    self._last_call = now
+                    return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(self.MIN_GAP)
+
+
+TRADE_RATE_LIMITER = TradingRateLimiter()
 
 
 class AppState:
@@ -43,13 +72,13 @@ class AppState:
         self.strategy = MomentumStrategy()
         self.proposals: list[OrderProposal] = []
         self.last_quote = None
-        self.last_quotes = []
-        self.signals = []
+        self.last_quotes: list = []
+        self.signals: list = []
         self.universe_source = "sample"
         self.last_tick_at: str | None = None
-        # Kill switch: when True the auto-tick loop skips ticking even if
-        # auto_tick_enabled is True.  The Run Tick button bypasses this.
         self.tick_paused: bool = False
+        self.session_start_at: str | None = None
+        self.session_start_equity: float = 0.0
         self.lock = threading.RLock()
         self.load()
 
@@ -59,10 +88,6 @@ class AppState:
                 self.live_broker = LongbridgeBroker()
             return self.live_broker
         return self.paper_broker
-
-    # ------------------------------------------------------------------
-    # Persist / load
-    # ------------------------------------------------------------------
 
     def load(self) -> None:
         if not STATE_FILE.exists():
@@ -78,7 +103,6 @@ class AppState:
             if "approval_mode" in settings_data:
                 self.settings.approval_mode = ApprovalMode(settings_data["approval_mode"])
             self.settings.normalized()
-
             paper = data.get("paper", {})
             portfolio_data = paper.get("portfolio", {})
             positions = {
@@ -93,15 +117,14 @@ class AppState:
                 cash=float(portfolio_data.get("cash", 10000.0)),
                 realized_pnl=float(portfolio_data.get("realized_pnl", 0.0)),
                 positions=positions,
-                last_prices={
-                    symbol: float(price)
-                    for symbol, price in portfolio_data.get("last_prices", {}).items()
-                },
+                last_prices={s: float(p) for s, p in portfolio_data.get("last_prices", {}).items()},
             )
-            prices = {symbol: float(price) for symbol, price in paper.get("prices", {}).items()}
+            prices = {s: float(p) for s, p in paper.get("prices", {}).items()}
             self.paper_broker = PaperBroker(portfolio=portfolio, prices=prices)
             self.last_tick_at = data.get("last_tick_at")
             self.tick_paused = bool(data.get("tick_paused", False))
+            self.session_start_at = data.get("session_start_at")
+            self.session_start_equity = float(data.get("session_start_equity", 0.0))
             self.proposals = [self._proposal_from_json(item) for item in data.get("proposals", [])]
         except Exception:
             return
@@ -114,18 +137,48 @@ class AppState:
             "proposals": to_json(self.proposals[-200:]),
             "last_tick_at": self.last_tick_at,
             "tick_paused": self.tick_paused,
+            "session_start_at": self.session_start_at,
+            "session_start_equity": self.session_start_equity,
         }
         STATE_FILE.write_text(json.dumps(payload, indent=2))
 
-    # ------------------------------------------------------------------
-    # Audit logging
-    # ------------------------------------------------------------------
+    def begin_session(self) -> None:
+        portfolio = self.paper_broker.portfolio()
+        self.session_start_at = datetime.now(timezone.utc).isoformat()
+        self.session_start_equity = portfolio.equity()
+
+    def close_session(self) -> None:
+        if self.session_start_at is None:
+            return
+        portfolio = self.paper_broker.portfolio()
+        equity_now = portfolio.equity()
+        record = {
+            "session_start": self.session_start_at,
+            "session_end": datetime.now(timezone.utc).isoformat(),
+            "start_equity": self.session_start_equity,
+            "end_equity": equity_now,
+            "session_pnl": round(equity_now - self.session_start_equity, 6),
+            "realized_pnl": portfolio.realized_pnl,
+            "settings": to_json(self.settings),
+        }
+        STATE_DIR.mkdir(exist_ok=True)
+        with SESSIONS_LOG.open("a") as f:
+            f.write(json.dumps(record) + "\n")
+        self.session_start_at = None
+        self.session_start_equity = 0.0
+
+    def session_pnl(self) -> float:
+        if self.session_start_at is None:
+            return 0.0
+        return round(self.paper_broker.portfolio().equity() - self.session_start_equity, 6)
 
     def audit(self, event: AuditEventType, symbol: str | None = None, **detail) -> None:
         STATE_DIR.mkdir(exist_ok=True)
         entry = AuditEntry(event=event, symbol=symbol, detail=detail)
+        serialised = to_json(entry)
         with AUDIT_LOG.open("a") as handle:
-            handle.write(json.dumps(to_json(entry)) + "\n")
+            handle.write(json.dumps(serialised) + "\n")
+        sse_broadcast_audit(serialised)
 
     def log_trade(self, proposal: OrderProposal) -> None:
         STATE_DIR.mkdir(exist_ok=True)
@@ -155,20 +208,9 @@ class AppState:
 STATE = AppState()
 
 
-# ---------------------------------------------------------------------------
-# Backtest helper
-# ---------------------------------------------------------------------------
-
 def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float = 10000.0) -> dict:
-    """Run a fast deterministic backtest using the paper price simulator.
-
-    Simulates `ticks` price ticks per symbol using the random-walk model,
-    then replays the MomentumStrategy and records equity at each step.
-    Returns a summary and per-tick equity curve.
-    """
     from .broker import PaperBroker as _PB
     from .strategy import MomentumStrategy as _MS
-
     bt_broker = _PB(starting_cash=starting_cash)
     bt_strategy = _MS()
     settings = Settings(
@@ -180,57 +222,34 @@ def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float = 100
     )
     equity_curve: list[dict] = []
     trades: list[dict] = []
-
     for tick_i in range(ticks):
         quotes = bt_broker.quotes(symbols)
-        portfolio = bt_broker.portfolio()
-        signals, proposals = bt_strategy.scan(settings, quotes, portfolio)
-
-        for proposal in proposals:
-            pending = {(p.symbol, p.side) for p in [] if p.status is OrderStatus.PROPOSED}
-            if (proposal.symbol, proposal.side) in pending:
-                continue
-            bt_broker.submit_order(proposal)
-            trades.append({"tick": tick_i, "trade": to_json(proposal)})
-
+        signals, proposals = bt_strategy.scan(settings, quotes, bt_broker.portfolio())
+        for p in proposals:
+            bt_broker.submit_order(p)
+            trades.append({"tick": tick_i, "trade": to_json(p)})
         equity_curve.append({"tick": tick_i, "equity": bt_broker.portfolio().equity()})
-
-    final_portfolio = bt_broker.portfolio()
+    final = bt_broker.portfolio()
     result = {
-        "symbols": symbols,
-        "ticks": ticks,
-        "starting_cash": starting_cash,
-        "final_equity": final_portfolio.equity(),
-        "realized_pnl": final_portfolio.realized_pnl,
-        "unrealized_pnl": final_portfolio.unrealized_pnl(),
-        "total_trades": len(trades),
-        "equity_curve": equity_curve,
-        "trades": trades[-50:],
+        "symbols": symbols, "ticks": ticks, "starting_cash": starting_cash,
+        "final_equity": final.equity(), "realized_pnl": final.realized_pnl,
+        "unrealized_pnl": final.unrealized_pnl(), "total_trades": len(trades),
+        "equity_curve": equity_curve, "trades": trades[-50:],
         "ran_at": datetime.now(timezone.utc).isoformat(),
     }
-
-    # persist
     STATE_DIR.mkdir(exist_ok=True)
     with BACKTEST_LOG.open("a") as f:
         f.write(json.dumps(result) + "\n")
-
     return result
 
 
-# ---------------------------------------------------------------------------
-# Trading engine
-# ---------------------------------------------------------------------------
-
 class TradingEngine:
     def status(self) -> dict:
-        broker = (
-            STATE.paper_broker
-            if STATE.settings.trading_mode is TradingMode.PAPER
-            else (STATE.live_broker or STATE.paper_broker)
-        )
+        broker = STATE.paper_broker if STATE.settings.trading_mode is TradingMode.PAPER else (STATE.live_broker or STATE.paper_broker)
+        portfolio = broker.portfolio()
         return {
             "settings": to_json(STATE.settings),
-            "portfolio": to_json(broker.portfolio()),
+            "portfolio": to_json(portfolio),
             "last_quote": to_json(STATE.last_quote),
             "last_quotes": to_json(STATE.last_quotes),
             "universe_source": STATE.universe_source,
@@ -238,6 +257,8 @@ class TradingEngine:
             "proposals": to_json(STATE.proposals[-20:]),
             "last_tick_at": STATE.last_tick_at,
             "tick_paused": STATE.tick_paused,
+            "session_pnl": STATE.session_pnl(),
+            "session_start_at": STATE.session_start_at,
         }
 
     def tick(self) -> dict:
@@ -248,64 +269,39 @@ class TradingEngine:
             STATE.last_quotes = quotes
             STATE.last_quote = quotes[0] if quotes else None
             STATE.last_tick_at = datetime.now(timezone.utc).isoformat()
-
-            STATE.audit(AuditEventType.TICK, detail={"symbols": symbols, "count": len(quotes)})
-
+            STATE.audit(AuditEventType.TICK, detail={"symbols_count": len(symbols), "quotes": len(quotes)})
             if STATE.settings.strategy_enabled and self._session_expired():
                 STATE.settings.strategy_enabled = False
+                STATE.close_session()
                 if STATE.settings.stop_at_end:
                     self._close_positions_at_end(quotes)
-
             if STATE.settings.strategy_enabled:
                 signals, proposals = STATE.strategy.scan(STATE.settings, quotes, broker.portfolio())
                 STATE.signals = signals
-
-                # Audit every signal
                 for sig in signals:
-                    STATE.audit(
-                        AuditEventType.SIGNAL,
-                        symbol=sig.symbol,
-                        action=sig.action,
-                        score=sig.score,
-                        price=sig.price,
-                        reason=sig.reason,
-                    )
-
-                pending = {
-                    (item.symbol, item.side)
-                    for item in STATE.proposals
-                    if item.status is OrderStatus.PROPOSED
-                }
+                    STATE.audit(AuditEventType.SIGNAL, symbol=sig.symbol, action=sig.action, score=round(sig.score, 3), price=sig.price)
+                pending = {(i.symbol, i.side) for i in STATE.proposals if i.status is OrderStatus.PROPOSED}
                 for proposal in proposals:
                     if (proposal.symbol, proposal.side) in pending:
                         continue
                     STATE.proposals.append(proposal)
                     pending.add((proposal.symbol, proposal.side))
-                    STATE.audit(
-                        AuditEventType.PROPOSAL,
-                        symbol=proposal.symbol,
-                        side=proposal.side.value,
-                        quantity=proposal.quantity,
-                        price=proposal.price,
-                        confidence=proposal.confidence,
-                    )
+                    STATE.audit(AuditEventType.PROPOSAL, symbol=proposal.symbol, side=proposal.side.value, quantity=round(proposal.quantity, 6), price=proposal.price, confidence=round(proposal.confidence, 3))
                     if STATE.settings.approval_mode is ApprovalMode.AUTO:
                         self.execute(proposal)
             else:
                 signals, _ = STATE.strategy.scan(STATE.settings, quotes, broker.portfolio())
                 STATE.signals = signals
-
             STATE.save()
             return self.status()
 
     def update_settings(self, payload: dict) -> dict:
         with STATE.lock:
             settings = STATE.settings
-            for key in (
-                "symbol", "markets", "universe", "budget", "duration_minutes",
-                "max_scan_symbols", "max_loss", "max_trade_value", "auto_tick_enabled",
-                "tick_interval_seconds", "allow_live_trading", "stop_at_end", "strategy_enabled",
-            ):
+            was_enabled = settings.strategy_enabled
+            for key in ("symbol", "markets", "universe", "budget", "duration_minutes", "max_scan_symbols",
+                        "max_loss", "max_trade_value", "auto_tick_enabled", "tick_interval_seconds",
+                        "allow_live_trading", "stop_at_end", "strategy_enabled"):
                 if key in payload:
                     setattr(settings, key, payload[key])
             if "trading_mode" in payload:
@@ -313,11 +309,28 @@ class TradingEngine:
             if "approval_mode" in payload:
                 settings.approval_mode = ApprovalMode(payload["approval_mode"])
             settings.normalized()
-            if settings.strategy_enabled and settings.started_at is None:
+            if settings.strategy_enabled and not was_enabled:
                 settings.started_at = datetime.now(timezone.utc).isoformat()
-            if not settings.strategy_enabled:
+                STATE.begin_session()
+            if not settings.strategy_enabled and was_enabled:
                 settings.started_at = None
+                STATE.close_session()
             STATE.save()
+            return self.status()
+
+    def reset_paper(self, starting_cash: float = 10000.0) -> dict:
+        with STATE.lock:
+            STATE.close_session()
+            STATE.paper_broker = PaperBroker(starting_cash=starting_cash)
+            STATE.proposals = []
+            STATE.signals = []
+            STATE.last_quotes = []
+            STATE.last_quote = None
+            STATE.strategy = MomentumStrategy()
+            STATE.settings.strategy_enabled = False
+            STATE.settings.started_at = None
+            STATE.save()
+            STATE.audit(AuditEventType.TICK, detail={"action": "paper_reset", "starting_cash": starting_cash})
             return self.status()
 
     def pause_tick(self) -> dict:
@@ -355,30 +368,20 @@ class TradingEngine:
     def execute(self, proposal: OrderProposal) -> None:
         proposal.status = OrderStatus.APPROVED
         try:
-            if STATE.settings.trading_mode is TradingMode.LIVE and not STATE.settings.allow_live_trading:
-                raise RuntimeError("Live order submission is disabled. Enable it only when you want real orders sent.")
+            if STATE.settings.trading_mode is TradingMode.LIVE:
+                if not STATE.settings.allow_live_trading:
+                    raise RuntimeError("Live order submission is disabled.")
+                if not TRADE_RATE_LIMITER.acquire(timeout=5.0):
+                    raise RuntimeError("Trade rate limit exceeded — try again shortly.")
             STATE.broker().submit_order(proposal)
             proposal.status = OrderStatus.FILLED if proposal.error is None else OrderStatus.FAILED
         except Exception as exc:
             proposal.status = OrderStatus.FAILED
             proposal.error = str(exc)
-
         event = AuditEventType.FILL if proposal.status is OrderStatus.FILLED else AuditEventType.FAIL
-        STATE.audit(
-            event,
-            symbol=proposal.symbol,
-            side=proposal.side.value,
-            quantity=proposal.quantity,
-            price=proposal.price,
-            error=proposal.error,
-        )
-
+        STATE.audit(event, symbol=proposal.symbol, side=proposal.side.value, quantity=round(proposal.quantity, 6), price=proposal.price, error=proposal.error)
         if STATE.settings.trading_mode is TradingMode.PAPER:
             STATE.log_trade(proposal)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _session_expired(self) -> bool:
         if STATE.settings.started_at is None:
@@ -391,7 +394,6 @@ class TradingEngine:
         if STATE.settings.universe:
             STATE.universe_source = "custom"
             return STATE.settings.active_universe()
-
         if STATE.settings.trading_mode is TradingMode.LIVE:
             discovered = broker.discover_symbols(STATE.settings.markets)
             if discovered:
@@ -405,25 +407,18 @@ class TradingEngine:
                 STATE.universe_source = source
                 cap = STATE.settings.max_scan_symbols
                 return list(dict.fromkeys(discovered)) if cap == 0 else list(dict.fromkeys(discovered))[:cap]
-
         STATE.universe_source = "sample fallback"
         return STATE.settings.active_universe()
 
     def _close_positions_at_end(self, quotes) -> None:
         portfolio = STATE.broker().portfolio()
-        latest = {quote.symbol: quote for quote in quotes}
+        latest = {q.symbol: q for q in quotes}
         for symbol, position in portfolio.positions.items():
             if position.quantity <= 0 or symbol not in latest:
                 continue
             quote = latest[symbol]
-            proposal = OrderProposal(
-                symbol=quote.symbol,
-                side=Side.SELL,
-                quantity=position.quantity,
-                price=quote.price,
-                confidence=1.0,
-                reason="Trading duration ended and stop-at-end is enabled.",
-            )
+            proposal = OrderProposal(symbol=quote.symbol, side=Side.SELL, quantity=position.quantity,
+                                     price=quote.price, confidence=1.0, reason="Trading duration ended — stop-at-end enabled.")
             STATE.proposals.append(proposal)
             if STATE.settings.approval_mode is ApprovalMode.AUTO:
                 self.execute(proposal)
@@ -435,166 +430,118 @@ class TradingEngine:
 ENGINE = TradingEngine()
 
 
-# ---------------------------------------------------------------------------
-# SSE — live push to all connected browser tabs
-# Uses a lightweight poll-and-push model: the client connects once and
-# receives pushed events. A background thread sends heartbeats; actual
-# state pushes happen from tick/execute via sse_broadcast().
-# We use a queue per subscriber to avoid holding the broadcast lock while
-# writing to slow sockets.
-# ---------------------------------------------------------------------------
-
-_sse_subscribers: dict[int, _queue.Queue] = {}   # id(wfile) → Queue
+# SSE — two named event types per connection: "state" and "audit"
+_sse_subs_state: dict[int, _queue.Queue] = {}
+_sse_subs_audit: dict[int, _queue.Queue] = {}
 _sse_lock = threading.Lock()
 _sse_counter = 0
 
 
-def _sse_subscribe() -> tuple[int, _queue.Queue]:
+def _sse_subscribe() -> tuple[int, _queue.Queue, _queue.Queue]:
     global _sse_counter
     with _sse_lock:
         _sse_counter += 1
         sid = _sse_counter
-        q: _queue.Queue = _queue.Queue(maxsize=10)
-        _sse_subscribers[sid] = q
-    return sid, q
+        sq: _queue.Queue = _queue.Queue(maxsize=20)
+        aq: _queue.Queue = _queue.Queue(maxsize=50)
+        _sse_subs_state[sid] = sq
+        _sse_subs_audit[sid] = aq
+    return sid, sq, aq
 
 
 def _sse_unsubscribe(sid: int) -> None:
     with _sse_lock:
-        _sse_subscribers.pop(sid, None)
+        _sse_subs_state.pop(sid, None)
+        _sse_subs_audit.pop(sid, None)
 
 
-def sse_broadcast(data: dict) -> None:
-    """Push a state snapshot to every connected SSE client (non-blocking)."""
-    payload = "data: " + json.dumps(data) + "\n\n"
+def _sse_push(subs: dict, data: dict, event_type: str) -> None:
+    payload = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
     with _sse_lock:
-        sids = list(_sse_subscribers.keys())
+        sids = list(subs.keys())
     for sid in sids:
         with _sse_lock:
-            q = _sse_subscribers.get(sid)
+            q = subs.get(sid)
         if q is not None:
             try:
                 q.put_nowait(payload)
             except _queue.Full:
-                pass  # slow client — skip this frame
+                pass
 
 
-# Patch ENGINE so every state-changing call broadcasts automatically
-_orig_tick = TradingEngine.tick
-_orig_execute = TradingEngine.execute
-_orig_pause = TradingEngine.pause_tick
-_orig_resume = TradingEngine.resume_tick
-_orig_update = TradingEngine.update_settings
-_orig_approve = TradingEngine.approve
-_orig_reject = TradingEngine.reject
+def sse_broadcast(data: dict) -> None:
+    _sse_push(_sse_subs_state, data, "state")
 
 
-def _patched_tick(self) -> dict:
-    result = _orig_tick(self)
-    sse_broadcast(result)
-    return result
+def sse_broadcast_audit(entry: dict) -> None:
+    _sse_push(_sse_subs_audit, entry, "audit")
 
 
-def _patched_execute(self, proposal) -> None:
-    _orig_execute(self, proposal)
-    sse_broadcast(self.status())
+# Patch ENGINE methods to auto-broadcast
+_o = {k: getattr(TradingEngine, k) for k in ("tick", "execute", "pause_tick", "resume_tick", "update_settings", "approve", "reject", "reset_paper")}
 
+def _p_tick(self):
+    r = _o["tick"](self); sse_broadcast(r); return r
+def _p_execute(self, p):
+    _o["execute"](self, p); sse_broadcast(self.status())
+def _p_pause(self):
+    r = _o["pause_tick"](self); sse_broadcast(r); return r
+def _p_resume(self):
+    r = _o["resume_tick"](self); sse_broadcast(r); return r
+def _p_update(self, payload):
+    r = _o["update_settings"](self, payload); sse_broadcast(r); return r
+def _p_approve(self, pid):
+    r = _o["approve"](self, pid)
+    if r: sse_broadcast(self.status())
+    return r
+def _p_reject(self, pid):
+    r = _o["reject"](self, pid)
+    if r: sse_broadcast(self.status())
+    return r
+def _p_reset(self, cash=10000.0):
+    r = _o["reset_paper"](self, cash); sse_broadcast(r); return r
 
-def _patched_pause(self) -> dict:
-    result = _orig_pause(self)
-    sse_broadcast(result)
-    return result
+TradingEngine.tick = _p_tick
+TradingEngine.execute = _p_execute
+TradingEngine.pause_tick = _p_pause
+TradingEngine.resume_tick = _p_resume
+TradingEngine.update_settings = _p_update
+TradingEngine.approve = _p_approve
+TradingEngine.reject = _p_reject
+TradingEngine.reset_paper = _p_reset
 
-
-def _patched_resume(self) -> dict:
-    result = _orig_resume(self)
-    sse_broadcast(result)
-    return result
-
-
-def _patched_update(self, payload) -> dict:
-    result = _orig_update(self, payload)
-    sse_broadcast(result)
-    return result
-
-
-def _patched_approve(self, proposal_id) -> bool:
-    result = _orig_approve(self, proposal_id)
-    if result:
-        sse_broadcast(self.status())
-    return result
-
-
-def _patched_reject(self, proposal_id) -> bool:
-    result = _orig_reject(self, proposal_id)
-    if result:
-        sse_broadcast(self.status())
-    return result
-
-
-TradingEngine.tick = _patched_tick
-TradingEngine.execute = _patched_execute
-TradingEngine.pause_tick = _patched_pause
-TradingEngine.resume_tick = _patched_resume
-TradingEngine.update_settings = _patched_update
-TradingEngine.approve = _patched_approve
-TradingEngine.reject = _patched_reject
-
-
-# ---------------------------------------------------------------------------
-# Auto-tick loop
-# ---------------------------------------------------------------------------
 
 def auto_tick_loop() -> None:
     while True:
         try:
-            should_tick = (
-                STATE.settings.auto_tick_enabled
-                and STATE.settings.strategy_enabled
-                and not STATE.tick_paused
-            )
-            if should_tick:
+            if STATE.settings.auto_tick_enabled and STATE.settings.strategy_enabled and not STATE.tick_paused:
                 ENGINE.tick()
             time.sleep(max(5, STATE.settings.tick_interval_seconds))
         except Exception:
             time.sleep(10)
 
 
-# ---------------------------------------------------------------------------
-# HTTP handler
-# ---------------------------------------------------------------------------
-
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
-        if path == "/":
-            self._send_file(STATIC / "index.html", "text/html")
-            return
-        if path == "/api/stream":
-            self._sse_stream()
-            return
-        if path == "/api/status":
-            self._json(ENGINE.status())
-            return
-        if path == "/api/tick":
-            self._json(ENGINE.tick())
-            return
-        if path == "/api/tick/pause":
-            self._json(ENGINE.pause_tick())
-            return
-        if path == "/api/tick/resume":
-            self._json(ENGINE.resume_tick())
-            return
-        if path == "/api/audit":
-            self._serve_jsonl_tail(AUDIT_LOG, 100)
-            return
-        if path == "/api/backtest/last":
-            self._serve_jsonl_tail(BACKTEST_LOG, 1)
+        routes = {
+            "/": lambda: self._send_file(STATIC / "index.html", "text/html"),
+            "/api/stream": self._sse_stream,
+            "/api/status": lambda: self._json(ENGINE.status()),
+            "/api/tick": lambda: self._json(ENGINE.tick()),
+            "/api/tick/pause": lambda: self._json(ENGINE.pause_tick()),
+            "/api/tick/resume": lambda: self._json(ENGINE.resume_tick()),
+            "/api/audit": lambda: self._serve_jsonl_tail(AUDIT_LOG, 100),
+            "/api/sessions": lambda: self._serve_jsonl_tail(SESSIONS_LOG, 50),
+            "/api/backtest/last": lambda: self._serve_jsonl_tail(BACKTEST_LOG, 1),
+        }
+        if path in routes:
+            routes[path]()
             return
         if path.startswith("/static/"):
             target = STATIC / path.removeprefix("/static/")
-            content_type = "text/css" if target.suffix == ".css" else "application/javascript"
-            self._send_file(target, content_type)
+            ct = "text/css" if target.suffix == ".css" else "application/javascript"
+            self._send_file(target, ct)
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -602,45 +549,40 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/settings":
             self._json(ENGINE.update_settings(self._read_json()))
-            return
-        if path == "/api/tick/pause":
+        elif path == "/api/tick/pause":
             self._json(ENGINE.pause_tick())
-            return
-        if path == "/api/tick/resume":
+        elif path == "/api/tick/resume":
             self._json(ENGINE.resume_tick())
-            return
-        if path.startswith("/api/proposals/") and path.endswith("/approve"):
-            proposal_id = path.split("/")[3]
-            if not ENGINE.approve(proposal_id):
+        elif path == "/api/paper/reset":
+            cash = float(self._read_json().get("starting_cash", 10000.0))
+            self._json(ENGINE.reset_paper(cash))
+        elif path.startswith("/api/proposals/") and path.endswith("/approve"):
+            pid = path.split("/")[3]
+            if not ENGINE.approve(pid):
                 self.send_error(HTTPStatus.NOT_FOUND)
-                return
-            self._json(ENGINE.status())
-            return
-        if path.startswith("/api/proposals/") and path.endswith("/reject"):
-            proposal_id = path.split("/")[3]
-            if not ENGINE.reject(proposal_id):
+            else:
+                self._json(ENGINE.status())
+        elif path.startswith("/api/proposals/") and path.endswith("/reject"):
+            pid = path.split("/")[3]
+            if not ENGINE.reject(pid):
                 self.send_error(HTTPStatus.NOT_FOUND)
-                return
-            self._json(ENGINE.status())
-            return
-        if path == "/api/backtest":
-            payload = self._read_json()
-            symbols = payload.get("symbols") or STATE.settings.active_universe()
-            ticks = max(10, min(500, int(payload.get("ticks", 60))))
-            starting_cash = float(payload.get("starting_cash", 10000.0))
-            result = run_backtest(symbols, ticks=ticks, starting_cash=starting_cash)
-            self._json(result)
-            return
-        self.send_error(HTTPStatus.NOT_FOUND)
+            else:
+                self._json(ENGINE.status())
+        elif path == "/api/backtest":
+            p = self._read_json()
+            symbols = p.get("symbols") or STATE.settings.active_universe()
+            ticks = max(10, min(500, int(p.get("ticks", 60))))
+            cash = float(p.get("starting_cash", 10000.0))
+            self._json(run_backtest(symbols, ticks=ticks, starting_cash=cash))
+        else:
+            self.send_error(HTTPStatus.NOT_FOUND)
 
-    def log_message(self, format: str, *args) -> None:
+    def log_message(self, *args) -> None:
         return
 
     def _read_json(self) -> dict:
-        length = int(self.headers.get("content-length", "0"))
-        if length == 0:
-            return {}
-        return json.loads(self.rfile.read(length).decode("utf-8"))
+        n = int(self.headers.get("content-length", "0"))
+        return json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
 
     def _json(self, payload: dict) -> None:
         data = json.dumps(payload).encode("utf-8")
@@ -651,20 +593,21 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _sse_stream(self) -> None:
-        """Keep the connection open and push state as Server-Sent Events.
-        Uses a per-client queue so the handler thread only wakes when there
-        is actually something to send — no busy-sleep, no thread-pool starvation."""
         self.send_response(HTTPStatus.OK)
         self.send_header("content-type", "text/event-stream")
         self.send_header("cache-control", "no-cache")
         self.send_header("x-accel-buffering", "no")
         self.end_headers()
 
-        sid, q = _sse_subscribe()
-        # Send current state immediately on connect
+        sid, sq, aq = _sse_subscribe()
         try:
-            initial = "data: " + json.dumps(ENGINE.status()) + "\n\n"
-            self.wfile.write(initial.encode("utf-8"))
+            # Immediately send current state
+            self.wfile.write(f"event: state\ndata: {json.dumps(ENGINE.status())}\n\n".encode())
+            # Immediately send last 50 audit entries
+            if AUDIT_LOG.exists():
+                for line in AUDIT_LOG.read_text().strip().splitlines()[-50:]:
+                    if line.strip():
+                        self.wfile.write(f"event: audit\ndata: {line}\n\n".encode())
             self.wfile.flush()
         except Exception:
             _sse_unsubscribe(sid)
@@ -672,13 +615,24 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             while True:
+                # Drain both queues without blocking first
+                sent = False
+                for q in (sq, aq):
+                    while True:
+                        try:
+                            self.wfile.write(q.get_nowait().encode())
+                            sent = True
+                        except _queue.Empty:
+                            break
+                if sent:
+                    self.wfile.flush()
+                    continue
+                # Nothing pending — block on state queue up to 20 s
                 try:
-                    # Block up to 20 s waiting for a pushed event
-                    msg = q.get(timeout=20)
-                    self.wfile.write(msg.encode("utf-8"))
+                    self.wfile.write(sq.get(timeout=20).encode())
                     self.wfile.flush()
                 except _queue.Empty:
-                    # Send a heartbeat comment so the browser doesn't time out
+                    # Heartbeat to keep connection alive
                     self.wfile.write(b": heartbeat\n\n")
                     self.wfile.flush()
         except Exception:
@@ -691,8 +645,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"entries": []})
             return
         lines = path.read_text().strip().splitlines()
-        entries = [json.loads(line) for line in lines[-n:] if line.strip()]
-        self._json({"entries": entries})
+        self._json({"entries": [json.loads(l) for l in lines[-n:] if l.strip()]})
 
     def _send_file(self, path: Path, content_type: str) -> None:
         if not path.exists() or not path.is_file():
@@ -709,7 +662,6 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     threading.Thread(target=auto_tick_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
-    # Allow enough threads for SSE connections + normal API calls simultaneously
     server.daemon_threads = True
     print("Trading tool running at http://127.0.0.1:8765")
     server.serve_forever()
