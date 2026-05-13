@@ -2,13 +2,15 @@
   "settings": {
     "symbol": "AAPL.US",
     "markets": [
-      "US"
+      "US",
+      "HK",
+      "SG"
     ],
     "universe": [],
-    "max_scan_symbols": 8,
+    "max_scan_symbols": 0,
     "trading_mode": "paper",
     "approval_mode": "auto",
-    "budget": 1000.0,
+    "budget": 10.0,
     "duration_minutes": 86400,
     "max_loss": 25.0,
     "max_trade_value": 250.0,
@@ -26,47 +28,59 @@
       "positions": {
         "GOOGL.US": {
           "symbol": "GOOGL.US",
-          "quantity": 1,
+          "quantity": 1.0,
           "avg_cost": 237.41
         },
         "TSLA.US": {
           "symbol": "TSLA.US",
-          "quantity": 0,
+          "quantity": 0.0,
           "avg_cost": 0.0
         },
         "AMZN.US": {
           "symbol": "AMZN.US",
-          "quantity": 4,
+          "quantity": 4.0,
           "avg_cost": 59.03
         }
       },
       "last_prices": {
-        "AAPL.US": 250.69,
-        "MSFT.US": 256.5,
-        "NVDA.US": 183.44,
-        "TSLA.US": 124.35,
-        "AMD.US": 292.53,
-        "META.US": 130.98,
-        "GOOGL.US": 239.29,
-        "AMZN.US": 57.96
+        "AAPL.US": 294.8,
+        "MSFT.US": 407.77,
+        "NVDA.US": 220.78,
+        "TSLA.US": 433.45,
+        "AMD.US": 448.29,
+        "META.US": 603.0,
+        "GOOGL.US": 387.35,
+        "AMZN.US": 265.82,
+        "700.HK": 462.6,
+        "9988.HK": 132.8,
+        "3690.HK": 87.6,
+        "1810.HK": 31.8,
+        "1299.HK": 86.95,
+        "388.HK": 423.8
       }
     },
     "prices": {
-      "AAPL.US": 250.69,
-      "MSFT.US": 256.5,
-      "NVDA.US": 183.44,
-      "TSLA.US": 124.35,
-      "AMD.US": 292.53,
-      "META.US": 130.98,
-      "GOOGL.US": 239.29,
-      "AMZN.US": 57.96
+      "AAPL.US": 294.8,
+      "MSFT.US": 407.77,
+      "NVDA.US": 220.78,
+      "TSLA.US": 433.45,
+      "AMD.US": 448.29,
+      "META.US": 603.0,
+      "GOOGL.US": 387.35,
+      "AMZN.US": 265.82,
+      "700.HK": 462.6,
+      "9988.HK": 132.8,
+      "3690.HK": 87.6,
+      "1810.HK": 31.8,
+      "1299.HK": 86.95,
+      "388.HK": 423.8
     }
   },
   "proposals": [
     {
       "symbol": "GOOGL.US",
       "side": "buy",
-      "quantity": 1,
+      "quantity": 1.0,
       "price": 237.41,
       "reason": "Positive short-term momentum versus the intraday baseline ranks this as a buy candidate.",
       "confidence": 0.6501445779045929,
@@ -78,7 +92,7 @@
     {
       "symbol": "TSLA.US",
       "side": "buy",
-      "quantity": 1,
+      "quantity": 1.0,
       "price": 125.18,
       "reason": "Positive short-term momentum versus the intraday baseline ranks this as a buy candidate.",
       "confidence": 0.6881804442285395,
@@ -90,7 +104,7 @@
     {
       "symbol": "AMZN.US",
       "side": "buy",
-      "quantity": 4,
+      "quantity": 4.0,
       "price": 59.03,
       "reason": "Positive short-term momentum versus the intraday baseline ranks this as a buy candidate.",
       "confidence": 0.7084264007455394,
@@ -102,7 +116,7 @@
     {
       "symbol": "TSLA.US",
       "side": "sell",
-      "quantity": 1,
+      "quantity": 1.0,
       "price": 123.99,
       "reason": "Momentum weakened versus the intraday baseline; exit is prioritized to protect P&L.",
       "confidence": 0.5930854178867191,
@@ -112,5 +126,6 @@
       "error": null
     }
   ],
-  "last_tick_at": "2026-05-13T03:55:32.026078+00:00"
+  "last_tick_at": "2026-05-13T08:56:45.946604+00:00",
+  "tick_paused": false
 }

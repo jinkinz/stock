@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue as _queue
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -83,7 +84,7 @@ class AppState:
             positions = {
                 symbol: Position(
                     symbol=pos.get("symbol", symbol),
-                    quantity=int(pos.get("quantity", 0)),
+                    quantity=float(pos.get("quantity", 0)),
                     avg_cost=float(pos.get("avg_cost", 0)),
                 )
                 for symbol, pos in portfolio_data.get("positions", {}).items()
@@ -140,7 +141,7 @@ class AppState:
         return OrderProposal(
             symbol=item["symbol"],
             side=Side(item["side"]),
-            quantity=int(item["quantity"]),
+            quantity=float(item["quantity"]),
             price=float(item["price"]),
             reason=item.get("reason", "Restored proposal."),
             confidence=float(item.get("confidence", 0.0)),
@@ -402,7 +403,8 @@ class TradingEngine:
                     for market in unsupported:
                         discovered.extend(DEFAULT_UNIVERSES.get(market, []))
                 STATE.universe_source = source
-                return list(dict.fromkeys(discovered))[: STATE.settings.max_scan_symbols]
+                cap = STATE.settings.max_scan_symbols
+                return list(dict.fromkeys(discovered)) if cap == 0 else list(dict.fromkeys(discovered))[:cap]
 
         STATE.universe_source = "sample fallback"
         return STATE.settings.active_universe()
@@ -434,6 +436,112 @@ ENGINE = TradingEngine()
 
 
 # ---------------------------------------------------------------------------
+# SSE — live push to all connected browser tabs
+# Uses a lightweight poll-and-push model: the client connects once and
+# receives pushed events. A background thread sends heartbeats; actual
+# state pushes happen from tick/execute via sse_broadcast().
+# We use a queue per subscriber to avoid holding the broadcast lock while
+# writing to slow sockets.
+# ---------------------------------------------------------------------------
+
+_sse_subscribers: dict[int, _queue.Queue] = {}   # id(wfile) → Queue
+_sse_lock = threading.Lock()
+_sse_counter = 0
+
+
+def _sse_subscribe() -> tuple[int, _queue.Queue]:
+    global _sse_counter
+    with _sse_lock:
+        _sse_counter += 1
+        sid = _sse_counter
+        q: _queue.Queue = _queue.Queue(maxsize=10)
+        _sse_subscribers[sid] = q
+    return sid, q
+
+
+def _sse_unsubscribe(sid: int) -> None:
+    with _sse_lock:
+        _sse_subscribers.pop(sid, None)
+
+
+def sse_broadcast(data: dict) -> None:
+    """Push a state snapshot to every connected SSE client (non-blocking)."""
+    payload = "data: " + json.dumps(data) + "\n\n"
+    with _sse_lock:
+        sids = list(_sse_subscribers.keys())
+    for sid in sids:
+        with _sse_lock:
+            q = _sse_subscribers.get(sid)
+        if q is not None:
+            try:
+                q.put_nowait(payload)
+            except _queue.Full:
+                pass  # slow client — skip this frame
+
+
+# Patch ENGINE so every state-changing call broadcasts automatically
+_orig_tick = TradingEngine.tick
+_orig_execute = TradingEngine.execute
+_orig_pause = TradingEngine.pause_tick
+_orig_resume = TradingEngine.resume_tick
+_orig_update = TradingEngine.update_settings
+_orig_approve = TradingEngine.approve
+_orig_reject = TradingEngine.reject
+
+
+def _patched_tick(self) -> dict:
+    result = _orig_tick(self)
+    sse_broadcast(result)
+    return result
+
+
+def _patched_execute(self, proposal) -> None:
+    _orig_execute(self, proposal)
+    sse_broadcast(self.status())
+
+
+def _patched_pause(self) -> dict:
+    result = _orig_pause(self)
+    sse_broadcast(result)
+    return result
+
+
+def _patched_resume(self) -> dict:
+    result = _orig_resume(self)
+    sse_broadcast(result)
+    return result
+
+
+def _patched_update(self, payload) -> dict:
+    result = _orig_update(self, payload)
+    sse_broadcast(result)
+    return result
+
+
+def _patched_approve(self, proposal_id) -> bool:
+    result = _orig_approve(self, proposal_id)
+    if result:
+        sse_broadcast(self.status())
+    return result
+
+
+def _patched_reject(self, proposal_id) -> bool:
+    result = _orig_reject(self, proposal_id)
+    if result:
+        sse_broadcast(self.status())
+    return result
+
+
+TradingEngine.tick = _patched_tick
+TradingEngine.execute = _patched_execute
+TradingEngine.pause_tick = _patched_pause
+TradingEngine.resume_tick = _patched_resume
+TradingEngine.update_settings = _patched_update
+TradingEngine.approve = _patched_approve
+TradingEngine.reject = _patched_reject
+
+
+# ---------------------------------------------------------------------------
 # Auto-tick loop
 # ---------------------------------------------------------------------------
 
@@ -461,6 +569,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/":
             self._send_file(STATIC / "index.html", "text/html")
+            return
+        if path == "/api/stream":
+            self._sse_stream()
             return
         if path == "/api/status":
             self._json(ENGINE.status())
@@ -539,6 +650,42 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _sse_stream(self) -> None:
+        """Keep the connection open and push state as Server-Sent Events.
+        Uses a per-client queue so the handler thread only wakes when there
+        is actually something to send — no busy-sleep, no thread-pool starvation."""
+        self.send_response(HTTPStatus.OK)
+        self.send_header("content-type", "text/event-stream")
+        self.send_header("cache-control", "no-cache")
+        self.send_header("x-accel-buffering", "no")
+        self.end_headers()
+
+        sid, q = _sse_subscribe()
+        # Send current state immediately on connect
+        try:
+            initial = "data: " + json.dumps(ENGINE.status()) + "\n\n"
+            self.wfile.write(initial.encode("utf-8"))
+            self.wfile.flush()
+        except Exception:
+            _sse_unsubscribe(sid)
+            return
+
+        try:
+            while True:
+                try:
+                    # Block up to 20 s waiting for a pushed event
+                    msg = q.get(timeout=20)
+                    self.wfile.write(msg.encode("utf-8"))
+                    self.wfile.flush()
+                except _queue.Empty:
+                    # Send a heartbeat comment so the browser doesn't time out
+                    self.wfile.write(b": heartbeat\n\n")
+                    self.wfile.flush()
+        except Exception:
+            pass
+        finally:
+            _sse_unsubscribe(sid)
+
     def _serve_jsonl_tail(self, path: Path, n: int) -> None:
         if not path.exists():
             self._json({"entries": []})
@@ -562,6 +709,8 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     threading.Thread(target=auto_tick_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
+    # Allow enough threads for SSE connections + normal API calls simultaneously
+    server.daemon_threads = True
     print("Trading tool running at http://127.0.0.1:8765")
     server.serve_forever()
 

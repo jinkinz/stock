@@ -10,7 +10,7 @@
     <main class="shell">
       <section class="topbar">
         <div>
-          <h1>Trading Tool</h1>
+          <h1>Trading Tool <span id="liveDot" class="live-dot" title="Connecting…"></span></h1>
           <p id="marketLine">Paper mode, waiting for data</p>
         </div>
         <div class="topbar-actions">
@@ -49,8 +49,8 @@
           </div>
 
           <div class="field">
-            <label for="max_scan_symbols">Max Symbols Per Scan</label>
-            <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="1" max="500" step="1" value="50" />
+            <label for="max_scan_symbols">Max Symbols Per Scan <span class="hint-inline">(0 = unlimited)</span></label>
+            <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="0" max="500" step="1" value="0" />
           </div>
 
           <div class="split">

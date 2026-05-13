@@ -6,6 +6,12 @@ const selected = {
 
 const money = (value) => `$${Number(value || 0).toFixed(2)}`;
 
+// Must be defined before any render function that calls it
+function formatQty(qty) {
+  const n = Number(qty);
+  return n % 1 === 0 ? n.toFixed(0) : parseFloat(n.toFixed(6)).toString();
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "content-type": "application/json" },
@@ -134,7 +140,7 @@ function renderPositions(portfolio) {
       const last = portfolio.last_prices[pos.symbol] || pos.avg_cost;
       const pnl = pos.quantity * (last - pos.avg_cost);
       return `<div class="row">
-        <div><strong>${pos.symbol}</strong><br><span>${pos.quantity} shares · avg ${money(pos.avg_cost)}</span></div>
+        <div><strong>${pos.symbol}</strong><br><span>${formatQty(pos.quantity)} shares · avg ${money(pos.avg_cost)}</span></div>
         <strong class="${pnl >= 0 ? "gain" : "loss"}">${money(pnl)}</strong>
       </div>`;
     })
@@ -196,7 +202,7 @@ function renderProposals(proposals) {
       return `<div class="row">
         <div>
           <span class="tag ${proposal.side}">${proposal.side}</span>
-          <strong>${proposal.quantity} ${proposal.symbol} @ ${money(proposal.price)}</strong>
+          <strong>${formatQty(proposal.quantity)} ${proposal.symbol} @ ${money(proposal.price)}</strong>
           <br><span>${proposal.reason}</span>
           ${proposal.error ? `<br><span class="loss">${proposal.error}</span>` : ""}
         </div>
@@ -420,14 +426,35 @@ document.querySelector("#proposals").addEventListener("click", async (event) => 
 document.querySelector("#refreshAudit").addEventListener("click", loadAuditLog);
 
 // ---------------------------------------------------------------------------
-// Boot
+// Boot — connect to live SSE stream
 // ---------------------------------------------------------------------------
 
-api("/api/status")
-  .then((data) => {
-    render(data);
-    loadAuditLog();
-  })
-  .catch((error) => {
-    document.querySelector("#marketLine").textContent = error.message;
-  });
+function connectStream() {
+  const es = new EventSource("/api/stream");
+  let tickCount = 0;
+
+  es.onopen = () => {
+    const dot = document.querySelector("#liveDot");
+    if (dot) { dot.classList.add("live"); dot.title = "Live"; }
+  };
+
+  es.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      render(data);
+      // Refresh audit log every 5 pushes to avoid spamming
+      tickCount++;
+      if (tickCount % 5 === 0) loadAuditLog();
+    } catch {}
+  };
+
+  es.onerror = () => {
+    const dot = document.querySelector("#liveDot");
+    if (dot) { dot.classList.remove("live"); dot.title = "Reconnecting…"; }
+    es.close();
+    setTimeout(connectStream, 3000);
+  };
+}
+
+connectStream();
+loadAuditLog();

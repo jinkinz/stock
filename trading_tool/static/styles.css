@@ -12,7 +12,28 @@
   --paused: #7c3aed;
 }
 
-* { box-sizing: border-box; }
+/* Live indicator dot */
+.live-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--line);
+  margin-left: 6px;
+  vertical-align: middle;
+  transition: background 0.3s;
+}
+.live-dot.live {
+  background: #22c55e;
+  box-shadow: 0 0 0 3px #bbf7d0;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 3px #bbf7d0; }
+  50%       { box-shadow: 0 0 0 6px #dcfce7; }
+}
+
+
 
 body {
   margin: 0;

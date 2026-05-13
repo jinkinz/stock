@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import random
 from datetime import datetime, timezone
 from typing import Protocol
@@ -82,30 +81,35 @@ class PaperBroker:
     def submit_order(self, proposal: OrderProposal) -> OrderProposal:
         symbol = proposal.symbol
         price = self._prices.get(symbol, proposal.price)
-        notional = price * proposal.quantity
+        quantity = round(float(proposal.quantity), 6)
+        notional = round(price * quantity, 6)
         position = self._portfolio.positions.setdefault(symbol, Position(symbol=symbol))
 
         if proposal.side is Side.BUY:
             if notional > self._portfolio.cash:
                 proposal.error = "Insufficient paper cash."
                 return proposal
-            new_quantity = position.quantity + proposal.quantity
+            new_quantity = round(position.quantity + quantity, 6)
             position.avg_cost = ((position.quantity * position.avg_cost) + notional) / new_quantity
             position.quantity = new_quantity
             self._portfolio.cash -= notional
         else:
-            if proposal.quantity > position.quantity:
+            if quantity > position.quantity + 1e-9:
                 proposal.error = "Cannot sell more than the current paper position."
                 return proposal
+            quantity = min(quantity, position.quantity)
+            notional = round(price * quantity, 6)
             self._portfolio.cash += notional
-            self._portfolio.realized_pnl += proposal.quantity * (price - position.avg_cost)
-            position.quantity -= proposal.quantity
-            if position.quantity == 0:
+            self._portfolio.realized_pnl += quantity * (price - position.avg_cost)
+            position.quantity = round(position.quantity - quantity, 6)
+            if position.quantity < 1e-9:
+                position.quantity = 0.0
                 position.avg_cost = 0.0
 
         proposal.price = round(price, 2)
+        proposal.quantity = quantity
         self._portfolio.cash = round(self._portfolio.cash, 2)
-        self._portfolio.realized_pnl = round(self._portfolio.realized_pnl, 2)
+        self._portfolio.realized_pnl = round(self._portfolio.realized_pnl, 6)
         return proposal
 
     def portfolio(self) -> Portfolio:
@@ -262,7 +266,7 @@ class LongbridgeBroker:
             for channel in channels:
                 for pos in getattr(channel, "positions", []) or []:
                     symbol = getattr(pos, "symbol", None)
-                    qty = int(getattr(pos, "quantity", 0) or 0)
+                    qty = float(getattr(pos, "quantity", 0) or 0)
                     cost_price = float(getattr(pos, "cost_price", 0) or 0)
                     if symbol and qty > 0:
                         synced[symbol] = Position(symbol=symbol, quantity=qty, avg_cost=cost_price)
@@ -274,7 +278,9 @@ class LongbridgeBroker:
         return self._portfolio
 
 
-def affordable_quantity(price: float, max_trade_value: float, available_cash: float) -> int:
+def affordable_quantity(price: float, max_trade_value: float, available_cash: float) -> float:
+    """Return the fractional quantity affordable within budget and trade-value limits.
+    Result is rounded to 6 decimal places (sub-cent precision)."""
     if price <= 0:
-        return 0
-    return max(0, math.floor(min(max_trade_value, available_cash) / price))
+        return 0.0
+    return round(min(max_trade_value, available_cash) / price, 6)

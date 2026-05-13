@@ -57,7 +57,7 @@ class Settings:
             self.markets = ["US"]
         self.budget = max(0.0, float(self.budget))
         self.duration_minutes = max(1, int(self.duration_minutes))
-        self.max_scan_symbols = max(1, min(500, int(self.max_scan_symbols)))
+        self.max_scan_symbols = max(0, min(500, int(self.max_scan_symbols)))
         self.max_loss = max(0.0, float(self.max_loss))
         self.max_trade_value = max(0.0, float(self.max_trade_value))
         self.tick_interval_seconds = max(5, int(self.tick_interval_seconds))
@@ -65,17 +65,18 @@ class Settings:
 
     def active_universe(self) -> list[str]:
         if self.universe:
-            return self.universe[: self.max_scan_symbols]
+            return self.universe if self.max_scan_symbols == 0 else self.universe[: self.max_scan_symbols]
         symbols: list[str] = []
         for market in self.markets:
             symbols.extend(DEFAULT_UNIVERSES.get(market, []))
-        return list(dict.fromkeys(symbols))[: self.max_scan_symbols]
+        unique = list(dict.fromkeys(symbols))
+        return unique if self.max_scan_symbols == 0 else unique[: self.max_scan_symbols]
 
 
 @dataclass
 class Position:
     symbol: str
-    quantity: int = 0
+    quantity: float = 0.0
     avg_cost: float = 0.0
 
 
@@ -113,7 +114,7 @@ class Signal:
 class OrderProposal:
     symbol: str
     side: Side
-    quantity: int
+    quantity: float
     price: float
     reason: str
     confidence: float
