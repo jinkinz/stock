@@ -24,7 +24,8 @@ from .models import (
     TradingMode,
     to_json,
 )
-from .strategy import MomentumStrategy
+from .ai_strategy import AI_STATUS, AIStrategy
+from .strategy import MomentumStrategy, PROPOSAL_TTL_SECONDS
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -69,7 +70,7 @@ class AppState:
         self.settings = Settings()
         self.paper_broker = PaperBroker(starting_cash=self.settings.budget)
         self.live_broker: LongbridgeBroker | None = None
-        self.strategy = MomentumStrategy()
+        self.strategy = AIStrategy()
         self.proposals: list[OrderProposal] = []
         self.last_quote = None
         self.last_quotes: list = []
@@ -79,6 +80,10 @@ class AppState:
         self.tick_paused: bool = False
         self.session_start_at: str | None = None
         self.session_start_equity: float = 0.0
+        # Symbol discovery cache — refreshed every 30 min to avoid rate limit hammering
+        self._symbol_cache: list[str] = []
+        self._symbol_cache_markets: list[str] = []
+        self._symbol_cache_at: float = 0.0
         self.lock = threading.RLock()
         self.load()
 
@@ -247,9 +252,9 @@ def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float | Non
 
 class TradingEngine:
     def status(self) -> dict:
+        from .broker import LB_STATUS
         broker = STATE.paper_broker if STATE.settings.trading_mode is TradingMode.PAPER else (STATE.live_broker or STATE.paper_broker)
         portfolio = broker.portfolio()
-        now = datetime.now(timezone.utc).isoformat()
         return {
             "settings": to_json(STATE.settings),
             "portfolio": to_json(portfolio),
@@ -263,6 +268,9 @@ class TradingEngine:
             "tick_paused": STATE.tick_paused,
             "session_pnl": STATE.session_pnl(),
             "session_start_at": STATE.session_start_at,
+            "lb_connected": LB_STATUS["connected"],
+            "lb_error": LB_STATUS["error"],
+            "ai_status": AI_STATUS,
         }
 
     def tick(self) -> dict:
@@ -335,7 +343,7 @@ class TradingEngine:
             STATE.signals = []
             STATE.last_quotes = []
             STATE.last_quote = None
-            STATE.strategy = MomentumStrategy()
+            STATE.strategy = AIStrategy()
             STATE.settings.strategy_enabled = False
             STATE.settings.started_at = None
             STATE.save()
@@ -402,7 +410,6 @@ class TradingEngine:
 
     def _expire_stale_proposals(self) -> None:
         """In manual mode, auto-expire proposals older than PROPOSAL_TTL_SECONDS."""
-        from .strategy import PROPOSAL_TTL_SECONDS
         if STATE.settings.approval_mode is ApprovalMode.AUTO:
             return
         now = datetime.now(timezone.utc)
@@ -427,23 +434,34 @@ class TradingEngine:
         return datetime.now(timezone.utc) >= started + timedelta(minutes=STATE.settings.duration_minutes)
 
     def _resolve_universe(self, broker) -> list[str]:
+        # 1. User-defined custom universe always wins
         if STATE.settings.universe:
             STATE.universe_source = "custom"
             return STATE.settings.active_universe()
-        if STATE.settings.trading_mode is TradingMode.LIVE:
-            discovered = broker.discover_symbols(STATE.settings.markets)
+
+        # 2. Try to discover from Longbridge — cached for 30 min to avoid
+        #    hammering the API on every tick
+        markets = STATE.settings.markets
+        cache_age = time.monotonic() - STATE._symbol_cache_at
+        cache_stale = cache_age > 1800 or STATE._symbol_cache_markets != markets
+
+        if cache_stale:
+            try:
+                discovered = broker.discover_symbols(markets)
+            except Exception:
+                discovered = []
             if discovered:
-                unsupported = [m for m in STATE.settings.markets if m != "US"]
-                source = "Longbridge security list"
-                if unsupported:
-                    source += f" + sample fallback for {', '.join(unsupported)}"
-                    from .models import DEFAULT_UNIVERSES
-                    for market in unsupported:
-                        discovered.extend(DEFAULT_UNIVERSES.get(market, []))
-                STATE.universe_source = source
-                cap = STATE.settings.max_scan_symbols
-                return list(dict.fromkeys(discovered)) if cap == 0 else list(dict.fromkeys(discovered))[:cap]
-        STATE.universe_source = "sample fallback"
+                STATE._symbol_cache = discovered
+                STATE._symbol_cache_markets = list(markets)
+                STATE._symbol_cache_at = time.monotonic()
+
+        if STATE._symbol_cache:
+            STATE.universe_source = f"Longbridge ({len(STATE._symbol_cache)} symbols)"
+            cap = STATE.settings.max_scan_symbols
+            return STATE._symbol_cache if cap == 0 else STATE._symbol_cache[:cap]
+
+        # 3. Fall back to expanded DEFAULT_UNIVERSES sample list
+        STATE.universe_source = "sample fallback (set Longbridge credentials for full scan)"
         return STATE.settings.active_universe()
 
     def _close_positions_at_end(self, quotes) -> None:

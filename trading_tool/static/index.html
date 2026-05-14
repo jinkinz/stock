@@ -4,29 +4,63 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>Trading Tool</title>
+    <title>AI Trading</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <div class="app">
 
-      <!-- Top bar -->
-      <section class="topbar">
-        <div>
-          <h1>Trading Tool <span id="liveDot" class="live-dot" title="Connecting…"></span></h1>
-          <p id="marketLine">Paper mode · waiting for data</p>
+      <!-- ── LEFT SIDEBAR: Settings ── -->
+      <aside class="sidebar">
+        <div class="sidebar-logo">
+          <span class="logo-text">AI Trading</span>
+          <span id="liveDot" class="live-dot" title="Connecting…"></span>
         </div>
-        <div class="topbar-actions">
-          <button id="tickButton" class="primary">Run Tick</button>
-          <button id="pauseButton" class="danger-btn">Stop Auto-Tick</button>
-          <button id="backtestButton" class="secondary">Run Backtest</button>
-          <button id="resetPaperButton" class="secondary">Reset Paper</button>
-        </div>
-      </section>
 
-      <!-- Settings + Metrics -->
-      <section class="grid">
-        <form id="settingsForm" class="panel controls">
+        <!-- Connection status -->
+        <div class="sidebar-status">
+          <div class="status-row">
+            <span class="status-label">Mode</span>
+            <span id="modeLabel" class="status-val">—</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">AI Brain</span>
+            <span id="aiStatus" class="status-val">—</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Longbridge</span>
+            <span id="lbStatus" class="status-val">—</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Quote</span>
+            <span id="quoteSource" class="status-val">—</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Universe</span>
+            <span id="universeSource" class="status-val">—</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Last tick</span>
+            <span id="lastTick" class="status-val">Never</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Scanned</span>
+            <span id="scanned" class="status-val">0</span>
+          </div>
+        </div>
+
+        <!-- Session controls -->
+        <div class="sidebar-section-label">Session</div>
+        <div class="session-controls">
+          <button id="startSessionBtn" class="btn-session-start wide">▶ Start Session</button>
+          <button id="endSessionBtn"   class="btn-session-end   wide" style="display:none">■ End Session</button>
+          <button id="tickButton"      class="btn-secondary     wide">⟳ Run Tick</button>
+          <button id="pauseButton"     class="btn-pause         wide">⏸ Stop Auto-Tick</button>
+        </div>
+
+        <!-- Settings form -->
+        <div class="sidebar-section-label">Settings</div>
+        <form id="settingsForm" class="settings-form">
           <div class="field">
             <label>Markets</label>
             <div class="market-picks">
@@ -36,120 +70,172 @@
             </div>
           </div>
           <div class="field">
-            <label for="universe">Custom Universe</label>
-            <textarea id="universe" name="universe" rows="3" placeholder="AAPL.US, 700.HK, D05.SG — blank = scan all selected markets"></textarea>
-            <p class="hint" id="universeSource">Blank uses discovery then sample fallback.</p>
+            <label for="universe">Custom Universe <span class="hint-inline">blank = scan all</span></label>
+            <textarea id="universe" name="universe" rows="2" placeholder="AAPL.US, 700.HK…"></textarea>
           </div>
-          <div class="split">
+          <div class="field-row">
             <div class="field"><label for="budget">Budget ($)</label>
               <input id="budget" name="budget" type="number" min="0" step="any" value="1000" /></div>
             <div class="field"><label for="duration_minutes">Duration (min)</label>
-              <input id="duration_minutes" name="duration_minutes" type="number" min="1" step="1" value="390" /></div>
+              <input id="duration_minutes" name="duration_minutes" type="number" min="1" value="390" /></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label for="max_loss">Max Loss ($)</label>
+              <input id="max_loss" name="max_loss" type="number" min="0" value="25" /></div>
+            <div class="field"><label for="max_trade_value">Max Trade ($)</label>
+              <input id="max_trade_value" name="max_trade_value" type="number" min="0" value="250" /></div>
           </div>
           <div class="field">
-            <label for="max_scan_symbols">Max Symbols Per Scan <span class="hint-inline">(0 = unlimited)</span></label>
-            <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="0" max="500" step="1" value="0" />
+            <label for="max_scan_symbols">Max Symbols <span class="hint-inline">0 = unlimited</span></label>
+            <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="0" max="500" value="0" />
           </div>
-          <div class="split">
-            <div class="field"><label for="max_loss">Max Loss ($)</label>
-              <input id="max_loss" name="max_loss" type="number" min="0" step="1" value="25" /></div>
-            <div class="field"><label for="max_trade_value">Max Trade ($)</label>
-              <input id="max_trade_value" name="max_trade_value" type="number" min="0" step="10" value="250" /></div>
-          </div>
-          <div class="field"><label>Trading Mode</label>
+          <div class="field">
+            <label>Trading Mode</label>
             <div class="segmented" data-name="trading_mode">
               <button type="button" data-value="paper" class="active">Paper</button>
               <button type="button" data-value="live">Live</button>
             </div>
           </div>
-          <div class="field"><label>Approval</label>
+          <div class="field">
+            <label>Approval</label>
             <div class="segmented" data-name="approval_mode">
               <button type="button" data-value="manual" class="active">Manual</button>
               <button type="button" data-value="auto">Auto</button>
             </div>
           </div>
-          <label class="toggle"><input id="strategy_enabled" name="strategy_enabled" type="checkbox" /><span>Strategy running</span></label>
-          <label class="toggle"><input id="auto_tick_enabled" name="auto_tick_enabled" type="checkbox" /><span>Auto scan</span></label>
-          <div class="field"><label for="tick_interval_seconds">Scan Interval (s)</label>
+          <div class="field"><label for="tick_interval_seconds">Scan interval (s)</label>
             <input id="tick_interval_seconds" name="tick_interval_seconds" type="number" min="5" step="5" value="60" /></div>
-          <label class="toggle danger"><input id="allow_live_trading" name="allow_live_trading" type="checkbox" /><span>Allow live order submission</span></label>
-          <button class="primary wide" type="submit">Save Settings</button>
+          <label class="toggle danger"><input id="allow_live_trading" name="allow_live_trading" type="checkbox" /><span>Allow live orders</span></label>
+          <button class="btn-primary wide" type="submit">Save Settings</button>
         </form>
 
-        <section class="panel metrics">
-          <div class="metric"><span>Cash Available</span><strong id="cash">—</strong></div>
-          <div class="metric"><span>Holdings Value</span><strong id="holdings">—</strong></div>
-          <div class="metric"><span>Realized P&L</span><strong id="realized">—</strong></div>
-          <div class="metric"><span>Unrealized P&L</span><strong id="unrealized">—</strong></div>
-          <div class="metric"><span>Session P&L</span><strong id="sessionPnl">—</strong></div>
-          <div class="metric"><span>Session Start</span><strong id="sessionStart" style="font-size:13px">—</strong></div>
-          <div class="metric"><span>Symbols Scanned</span><strong id="scanned">0</strong></div>
-          <div class="metric"><span>Last Tick</span><strong id="lastTick" style="font-size:13px">Never</strong></div>
-          <div class="metric" id="pauseMetric"><span>Auto-Tick</span><strong id="pauseStatus">—</strong></div>
-          <div class="metric"><span>Quote Source</span><strong id="quoteSource" style="font-size:13px">—</strong></div>
+        <!-- Danger zone -->
+        <div class="sidebar-section-label" style="margin-top:auto">Danger Zone</div>
+        <div class="danger-zone">
+          <button id="resetPaperButton" class="btn-danger wide">Reset Paper Account</button>
+          <button id="backtestButton"   class="btn-secondary wide">Run Backtest</button>
+        </div>
+      </aside>
+
+      <!-- ── MAIN CONTENT ── -->
+      <main class="main">
+
+        <!-- Row 1: Account summary strip -->
+        <section class="account-strip">
+          <div class="acct-stat">
+            <div class="acct-label">Cash Available</div>
+            <div class="acct-value" id="cash">—</div>
+          </div>
+          <div class="acct-divider"></div>
+          <div class="acct-stat">
+            <div class="acct-label">Holdings Value</div>
+            <div class="acct-value" id="holdings">—</div>
+          </div>
+          <div class="acct-divider"></div>
+          <div class="acct-stat">
+            <div class="acct-label">Session P&L</div>
+            <div class="acct-value" id="sessionPnl">—</div>
+          </div>
+          <div class="acct-divider"></div>
+          <div class="acct-stat">
+            <div class="acct-label">Unrealized P&L</div>
+            <div class="acct-value" id="unrealized">—</div>
+          </div>
+          <div class="acct-divider"></div>
+          <div class="acct-stat">
+            <div class="acct-label">Realized P&L</div>
+            <div class="acct-value" id="realized">—</div>
+          </div>
+          <div class="acct-divider"></div>
+          <div class="acct-stat">
+            <div class="acct-label">Session Started</div>
+            <div class="acct-value" id="sessionStart" style="font-size:14px">—</div>
+          </div>
         </section>
-      </section>
 
-      <!-- Market Scan + Positions -->
-      <section class="columns">
-        <section class="panel"><h2>Market Scan</h2><div id="quote" class="empty">No quotes yet</div></section>
-        <section class="panel"><h2>Positions</h2><div id="positions" class="empty">No positions</div></section>
-      </section>
+        <!-- Row 2: Positions (most important — what AI owns) -->
+        <section class="card" id="positionsCard">
+          <div class="card-header">
+            <h2>Positions <span class="badge" id="positionCount">0</span></h2>
+            <span class="hint-inline">What the AI currently holds</span>
+          </div>
+          <div id="positions" class="empty-state">No open positions</div>
+        </section>
 
-      <!-- AI Ranking -->
-      <section class="panel">
-        <div class="panel-header-row">
-          <h2>AI Ranking <span id="signalsTs" class="section-ts"></span></h2>
-          <span class="hint-inline" style="font-size:11px">Strategy: Momentum (short vs long avg · 0.2% threshold)</span>
+        <!-- Row 3: Proposals (needs attention) -->
+        <section class="card" id="proposalsCard">
+          <div class="card-header">
+            <h2>Trade Proposals <span class="badge urgent" id="proposalCount">0</span></h2>
+            <span id="approvalModeLabel" class="hint-inline"></span>
+          </div>
+          <div id="proposals" class="empty-state">No proposals yet</div>
+        </section>
+
+        <!-- Row 4: Two columns — signals + market scan -->
+        <div class="two-col">
+          <section class="card">
+            <div class="card-header">
+              <h2>AI Ranking <span id="signalsTs" class="section-ts"></span></h2>
+              <span class="hint-inline">Momentum · 0.2% threshold</span>
+            </div>
+            <div id="signals" class="empty-state">No scan yet</div>
+          </section>
+          <section class="card">
+            <div class="card-header">
+              <h2>Market Scan</h2>
+              <span class="hint-inline">Latest prices</span>
+            </div>
+            <div id="quote" class="empty-state">No quotes yet</div>
+          </section>
         </div>
-        <div id="signals" class="empty">No scan yet — run a tick or enable Auto scan</div>
-      </section>
 
-      <!-- Trade Proposals -->
-      <section class="panel">
-        <h2>Trade Proposals</h2>
-        <div id="proposals" class="empty">No proposals yet</div>
-      </section>
+        <!-- Row 5: Diagnostics (collapsible) -->
+        <section class="card collapsible" id="diagCard">
+          <div class="card-header clickable" id="diagToggle">
+            <h2>Diagnostics <span id="diagTs" class="section-ts"></span></h2>
+            <span class="collapse-icon">▼</span>
+          </div>
+          <div id="diagnostics" class="empty-state collapsible-body">No diagnostics yet</div>
+        </section>
 
-      <!-- Diagnostics -->
-      <section class="panel">
-        <div class="panel-header-row">
-          <h2>Diagnostics <span class="hint-inline">volatility · spread · trend · volume</span> <span id="diagTs" class="section-ts"></span></h2>
-        </div>
-        <div id="diagnostics" class="empty">No diagnostics yet</div>
-      </section>
+        <!-- Row 6: Backtest (hidden until run) -->
+        <section class="card" id="backtestPanel" style="display:none">
+          <div class="card-header">
+            <h2>Backtest Results</h2>
+          </div>
+          <div id="backtestResult"></div>
+        </section>
 
-      <!-- Backtest -->
-      <section class="panel" id="backtestPanel" style="display:none">
-        <h2>Backtest Results</h2>
-        <div id="backtestResult"></div>
-      </section>
+        <!-- Row 7: Session History (collapsible) -->
+        <section class="card collapsible" id="sessionsCard">
+          <div class="card-header clickable" id="sessionsToggle">
+            <h2>Session History</h2>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button id="sessionsTab" class="btn-secondary small" onclick="event.stopPropagation()">Load</button>
+              <span class="collapse-icon">▼</span>
+            </div>
+          </div>
+          <div class="collapsible-body" style="overflow-x:auto">
+            <table class="data-table" style="min-width:560px">
+              <thead><tr><th>Start</th><th>End</th><th>Start Equity</th><th>End Equity</th><th>Session P&L</th></tr></thead>
+              <tbody id="sessionsBody">
+                <tr><td colspan="5" class="empty-cell">Click Load to view</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      <!-- Session History -->
-      <section class="panel">
-        <div class="panel-header-row">
-          <h2>Session History <span class="hint-inline">P&L per trading session</span></h2>
-          <button id="sessionsTab" class="secondary small">Load</button>
-        </div>
-        <div style="overflow-x:auto">
-          <table class="diag-table" style="min-width:560px">
-            <thead><tr><th>Start</th><th>End</th><th>Start Equity</th><th>End Equity</th><th>Session P&L</th></tr></thead>
-            <tbody id="sessionsBody">
-              <tr><td colspan="5" style="padding:12px;color:var(--muted)">Click Load to view session history</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+        <!-- Row 8: Audit Log (collapsible) -->
+        <section class="card collapsible" id="auditCard">
+          <div class="card-header clickable" id="auditToggle">
+            <h2>Audit Log <span class="hint-inline">live</span></h2>
+            <span class="collapse-icon">▼</span>
+          </div>
+          <div id="auditLog" class="empty-state collapsible-body">Connecting…</div>
+        </section>
 
-      <!-- Audit Log -->
-      <section class="panel">
-        <div class="panel-header-row">
-          <h2>Audit Log <span class="hint-inline">live · last 80 events</span></h2>
-        </div>
-        <div id="auditLog" class="empty">Connecting…</div>
-      </section>
-
-    </main>
+      </main>
+    </div>
     <script src="/static/app.js"></script>
   </body>
 </html>

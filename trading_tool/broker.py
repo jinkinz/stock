@@ -1,10 +1,41 @@
 from __future__ import annotations
 
+import os
 import random
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Protocol
 
 from .models import OrderProposal, Portfolio, Position, Quote, Side
+
+
+def _load_dotenv() -> None:
+    """Load LONGBRIDGE_* vars from a .env file if present (current dir or home dir).
+    Does NOT override vars that are already set in the environment."""
+    for candidate in (Path.cwd() / ".env", Path.home() / ".env"):
+        if not candidate.exists():
+            continue
+        try:
+            for line in candidate.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if (key.startswith("LONGBRIDGE_") or key.startswith("ANTHROPIC_")) and key not in os.environ:
+                    os.environ[key] = val
+        except Exception:
+            pass
+        break   # stop after first found
+
+
+# Load .env on import so credentials are available before any broker is created
+_load_dotenv()
+
+
+# Module-level connection status — surfaced to the UI
+LB_STATUS: dict = {"connected": False, "error": None}
 
 
 class Broker(Protocol):
@@ -40,8 +71,12 @@ class PaperBroker:
         # Try to attach a Longbridge quote context so paper trades use real prices.
         try:
             self._lb = LongbridgeBroker()
-        except Exception:
+            LB_STATUS["connected"] = True
+            LB_STATUS["error"] = None
+        except Exception as e:
             self._lb = None
+            LB_STATUS["connected"] = False
+            LB_STATUS["error"] = str(e)
 
     # ------------------------------------------------------------------
     # Quote helpers
@@ -210,18 +245,107 @@ class LongbridgeBroker:
         return result
 
     def discover_symbols(self, markets: list[str]) -> list[str]:
+        """Discover as many tradeable symbols as possible from Longbridge.
+
+        Strategy per market:
+          US  — security_list(Overnight) gives the full Longbridge US universe
+          HK  — index constituents: HSI (^HSI), HSCEI (^HSCEI), HSTECH (^HSTECH)
+          SG  — index constituents: STI (^STI)
+
+        All results are deduplicated and capped by max_scan_symbols (0 = unlimited).
+        Falls back to empty list so caller can use DEFAULT_UNIVERSES.
+        """
         symbols: list[str] = []
-        if "US" not in markets:
-            return symbols
-        try:
-            responses = self.quote_ctx.security_list(self.Market.US, self.SecurityListCategory.Overnight)
-        except TypeError:
-            responses = self.quote_ctx.security_list(self.SecurityListCategory.Overnight)
-        for item in responses:
-            symbol = getattr(item, "symbol", None)
-            if symbol:
-                symbols.append(symbol)
-        return list(dict.fromkeys(symbols))
+        seen: set[str] = set()
+
+        def add(sym: str) -> None:
+            if sym and sym not in seen:
+                seen.add(sym)
+                symbols.append(sym)
+
+        market_map = {
+            "US": getattr(self.Market, "US", None),
+            "HK": getattr(self.Market, "HK", None),
+            "SG": getattr(self.Market, "SG", None),
+        }
+
+        # ── US: security_list gives a large universe directly ──────────
+        if "US" in markets:
+            lb_market = market_map.get("US")
+            if lb_market:
+                for cat_name in ("Overnight", "All", "Normal"):
+                    cat = getattr(self.SecurityListCategory, cat_name, None)
+                    if cat is None:
+                        continue
+                    try:
+                        responses = self.quote_ctx.security_list(lb_market, cat)
+                        for item in responses or []:
+                            add(getattr(item, "symbol", None))
+                        if responses:
+                            break
+                    except Exception:
+                        continue
+
+        # ── HK: pull HSI + HSCEI + HSTECH index constituents ──────────
+        if "HK" in markets:
+            hk_indices = ["^HSI", "^HSCEI", "^HSTECH", "^HCCI"]
+            for idx in hk_indices:
+                try:
+                    resp = self.quote_ctx.index_constituents(idx)
+                    for sym in getattr(resp, "constituents", []) or []:
+                        s = getattr(sym, "symbol", sym) if not isinstance(sym, str) else sym
+                        if s and s.endswith(".HK"):
+                            add(s)
+                except Exception:
+                    pass
+            # Also try security_list for HK if available
+            lb_market = market_map.get("HK")
+            if lb_market:
+                for cat_name in ("Overnight", "All", "Normal"):
+                    cat = getattr(self.SecurityListCategory, cat_name, None)
+                    if cat is None:
+                        continue
+                    try:
+                        responses = self.quote_ctx.security_list(lb_market, cat)
+                        for item in responses or []:
+                            sym = getattr(item, "symbol", None)
+                            if sym and sym.endswith(".HK"):
+                                add(sym)
+                        if responses:
+                            break
+                    except Exception:
+                        continue
+
+        # ── SG: pull STI index constituents ────────────────────────────
+        if "SG" in markets:
+            sg_indices = ["^STI"]
+            for idx in sg_indices:
+                try:
+                    resp = self.quote_ctx.index_constituents(idx)
+                    for sym in getattr(resp, "constituents", []) or []:
+                        s = getattr(sym, "symbol", sym) if not isinstance(sym, str) else sym
+                        if s and s.endswith(".SG"):
+                            add(s)
+                except Exception:
+                    pass
+            lb_market = market_map.get("SG")
+            if lb_market:
+                for cat_name in ("Overnight", "All", "Normal"):
+                    cat = getattr(self.SecurityListCategory, cat_name, None)
+                    if cat is None:
+                        continue
+                    try:
+                        responses = self.quote_ctx.security_list(lb_market, cat)
+                        for item in responses or []:
+                            sym = getattr(item, "symbol", None)
+                            if sym and sym.endswith(".SG"):
+                                add(sym)
+                        if responses:
+                            break
+                    except Exception:
+                        continue
+
+        return symbols
 
     # ------------------------------------------------------------------
     # Orders
