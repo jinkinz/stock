@@ -3343,3 +3343,658 @@
 {"event": "signal", "at": "2026-05-13T19:07:44.054276+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
 {"event": "signal", "at": "2026-05-13T19:07:44.054537+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
 {"event": "signal", "at": "2026-05-13T19:07:44.054797+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.25, "price": 132.8}}
+{"event": "tick", "at": "2026-05-13T19:07:54.111846+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:07:54.116960+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.259, "price": 269.89}}
+{"event": "signal", "at": "2026-05-13T19:07:54.117622+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.257, "price": 402.585}}
+{"event": "signal", "at": "2026-05-13T19:07:54.117912+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.253, "price": 405.23}}
+{"event": "signal", "at": "2026-05-13T19:07:54.118153+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.252, "price": 446.22}}
+{"event": "signal", "at": "2026-05-13T19:07:54.118387+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.252, "price": 226.58}}
+{"event": "signal", "at": "2026-05-13T19:07:54.118655+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.252, "price": 446.975}}
+{"event": "signal", "at": "2026-05-13T19:07:54.119156+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:07:54.119498+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:07:54.119933+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:07:54.120247+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:07:54.120498+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "signal", "at": "2026-05-13T19:07:54.120768+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.25, "price": 132.8}}
+{"event": "tick", "at": "2026-05-13T19:08:04.171011+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:08:04.175147+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.259, "price": 269.923}}
+{"event": "signal", "at": "2026-05-13T19:08:04.175499+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.257, "price": 402.6}}
+{"event": "signal", "at": "2026-05-13T19:08:04.175810+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.254, "price": 226.565}}
+{"event": "signal", "at": "2026-05-13T19:08:04.176071+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.252, "price": 405.26}}
+{"event": "signal", "at": "2026-05-13T19:08:04.176330+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.252, "price": 446.2}}
+{"event": "signal", "at": "2026-05-13T19:08:04.176571+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.251, "price": 446.995}}
+{"event": "signal", "at": "2026-05-13T19:08:04.176817+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:08:04.177061+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:08:04.177310+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:08:04.177542+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:08:04.177885+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "signal", "at": "2026-05-13T19:08:04.178124+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.25, "price": 132.8}}
+{"event": "tick", "at": "2026-05-13T19:08:14.228129+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:08:14.234085+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.258, "price": 269.88}}
+{"event": "signal", "at": "2026-05-13T19:08:14.234459+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.257, "price": 402.65}}
+{"event": "signal", "at": "2026-05-13T19:08:14.234734+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.255, "price": 446.62}}
+{"event": "signal", "at": "2026-05-13T19:08:14.235008+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.254, "price": 226.63}}
+{"event": "signal", "at": "2026-05-13T19:08:14.235271+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.253, "price": 405.31}}
+{"event": "signal", "at": "2026-05-13T19:08:14.235523+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.252, "price": 447.04}}
+{"event": "signal", "at": "2026-05-13T19:08:14.235762+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.251, "price": 299.15}}
+{"event": "signal", "at": "2026-05-13T19:08:14.235997+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:08:14.236232+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:08:14.236467+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:08:14.236701+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:08:14.236952+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "tick", "at": "2026-05-13T19:08:24.288905+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:08:24.294317+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.26, "price": 446.48}}
+{"event": "signal", "at": "2026-05-13T19:08:24.294767+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.257, "price": 402.64}}
+{"event": "signal", "at": "2026-05-13T19:08:24.295051+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.255, "price": 269.85}}
+{"event": "signal", "at": "2026-05-13T19:08:24.295346+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.255, "price": 226.645}}
+{"event": "signal", "at": "2026-05-13T19:08:24.295618+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.254, "price": 405.34}}
+{"event": "signal", "at": "2026-05-13T19:08:24.295885+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.253, "price": 299.17}}
+{"event": "signal", "at": "2026-05-13T19:08:24.296153+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.252, "price": 447.04}}
+{"event": "signal", "at": "2026-05-13T19:08:24.296428+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:08:24.296670+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:08:24.296916+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:08:24.297215+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:08:24.297507+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "tick", "at": "2026-05-13T19:08:34.347247+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:08:34.351341+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.258, "price": 446.6}}
+{"event": "signal", "at": "2026-05-13T19:08:34.351627+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.257, "price": 402.71}}
+{"event": "signal", "at": "2026-05-13T19:08:34.351888+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.256, "price": 270.03}}
+{"event": "signal", "at": "2026-05-13T19:08:34.352142+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.255, "price": 226.62}}
+{"event": "signal", "at": "2026-05-13T19:08:34.352451+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.254, "price": 299.15}}
+{"event": "signal", "at": "2026-05-13T19:08:34.352830+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.253, "price": 405.27}}
+{"event": "signal", "at": "2026-05-13T19:08:34.353091+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.253, "price": 447.06}}
+{"event": "signal", "at": "2026-05-13T19:08:34.353419+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:08:34.353678+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:08:34.353937+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:08:34.354178+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:08:34.354429+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "tick", "at": "2026-05-13T19:08:44.417686+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:08:44.449711+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.261, "price": 446.81}}
+{"event": "signal", "at": "2026-05-13T19:08:44.453794+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.259, "price": 270.09}}
+{"event": "signal", "at": "2026-05-13T19:08:44.457907+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.257, "price": 402.69}}
+{"event": "signal", "at": "2026-05-13T19:08:44.461804+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.254, "price": 226.68}}
+{"event": "signal", "at": "2026-05-13T19:08:44.468650+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.254, "price": 299.19}}
+{"event": "signal", "at": "2026-05-13T19:08:44.472420+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.254, "price": 447.17}}
+{"event": "signal", "at": "2026-05-13T19:08:44.473364+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.252, "price": 405.343}}
+{"event": "signal", "at": "2026-05-13T19:08:44.473885+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:08:44.474346+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:08:44.474822+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:08:44.475160+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:08:44.475502+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "tick", "at": "2026-05-13T19:08:54.526130+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:08:54.531740+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.263, "price": 446.91}}
+{"event": "signal", "at": "2026-05-13T19:08:54.532257+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.259, "price": 270.06}}
+{"event": "signal", "at": "2026-05-13T19:08:54.532661+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.256, "price": 402.74}}
+{"event": "signal", "at": "2026-05-13T19:08:54.532931+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.256, "price": 226.73}}
+{"event": "signal", "at": "2026-05-13T19:08:54.533177+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.255, "price": 447.12}}
+{"event": "signal", "at": "2026-05-13T19:08:54.533415+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.254, "price": 299.155}}
+{"event": "signal", "at": "2026-05-13T19:08:54.533657+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.253, "price": 405.36}}
+{"event": "signal", "at": "2026-05-13T19:08:54.533910+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:08:54.534154+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:08:54.534391+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:08:54.534640+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:08:54.534882+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "tick", "at": "2026-05-13T19:09:04.577862+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:09:04.583465+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.265, "price": 447.07}}
+{"event": "signal", "at": "2026-05-13T19:09:04.583807+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.257, "price": 270.05}}
+{"event": "signal", "at": "2026-05-13T19:09:04.584128+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.256, "price": 402.74}}
+{"event": "signal", "at": "2026-05-13T19:09:04.584451+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.256, "price": 226.725}}
+{"event": "signal", "at": "2026-05-13T19:09:04.584762+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.255, "price": 447.26}}
+{"event": "signal", "at": "2026-05-13T19:09:04.585067+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.253, "price": 299.14}}
+{"event": "signal", "at": "2026-05-13T19:09:04.585368+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.253, "price": 405.33}}
+{"event": "signal", "at": "2026-05-13T19:09:04.585674+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:09:04.585979+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:09:04.586282+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:09:04.586565+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:09:04.586825+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "tick", "at": "2026-05-13T19:09:14.665107+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-13T19:09:14.670449+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.264, "price": 447.044}}
+{"event": "signal", "at": "2026-05-13T19:09:14.670781+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.257, "price": 447.48}}
+{"event": "signal", "at": "2026-05-13T19:09:14.671157+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.255, "price": 226.77}}
+{"event": "signal", "at": "2026-05-13T19:09:14.671512+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.255, "price": 402.74}}
+{"event": "signal", "at": "2026-05-13T19:09:14.671892+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.254, "price": 269.96}}
+{"event": "signal", "at": "2026-05-13T19:09:14.672191+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.252, "price": 405.36}}
+{"event": "signal", "at": "2026-05-13T19:09:14.672483+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.252, "price": 299.09}}
+{"event": "signal", "at": "2026-05-13T19:09:14.672774+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.25, "price": 31.8}}
+{"event": "signal", "at": "2026-05-13T19:09:14.673033+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.25, "price": 423.8}}
+{"event": "signal", "at": "2026-05-13T19:09:14.673292+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.6}}
+{"event": "signal", "at": "2026-05-13T19:09:14.673549+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 86.95}}
+{"event": "signal", "at": "2026-05-13T19:09:14.673805+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 462.6}}
+{"event": "tick", "at": "2026-05-13T23:09:48.381787+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 20}}}
+{"event": "signal", "at": "2026-05-13T23:09:48.396035+00:00", "symbol": "AMD.US", "detail": {"action": "buy", "score": 0.615, "price": 449.95}}
+{"event": "signal", "at": "2026-05-13T23:09:48.396798+00:00", "symbol": "TSLA.US", "detail": {"action": "buy", "score": 0.613, "price": 450.76}}
+{"event": "signal", "at": "2026-05-13T23:09:48.397734+00:00", "symbol": "AMZN.US", "detail": {"action": "buy", "score": 0.597, "price": 271.97}}
+{"event": "signal", "at": "2026-05-13T23:09:48.398571+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.593, "price": 465.89}}
+{"event": "signal", "at": "2026-05-13T23:09:48.399270+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.259, "price": 226.97}}
+{"event": "signal", "at": "2026-05-13T23:09:48.399920+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.257, "price": 31.87}}
+{"event": "signal", "at": "2026-05-13T23:09:48.400300+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.254, "price": 87.07}}
+{"event": "signal", "at": "2026-05-13T23:09:48.400646+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.13}}
+{"event": "signal", "at": "2026-05-13T23:09:48.400983+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.248, "price": 404.72}}
+{"event": "signal", "at": "2026-05-13T23:09:48.401389+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.246, "price": 298.59}}
+{"event": "signal", "at": "2026-05-13T23:09:48.401949+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.242, "price": 87.37}}
+{"event": "signal", "at": "2026-05-13T23:09:48.402341+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.231, "price": 131.96}}
+{"event": "proposal", "at": "2026-05-13T23:09:48.402888+00:00", "symbol": "AMD.US", "detail": {"side": "buy", "quantity": 0.177798, "price": 449.95, "confidence": 0.615}}
+{"event": "fail", "at": "2026-05-13T23:09:48.403435+00:00", "symbol": "AMD.US", "detail": {"side": "buy", "quantity": 0.177798, "price": 449.95, "error": "Insufficient paper cash."}}
+{"event": "tick", "at": "2026-05-14T01:09:53.397106+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T01:09:53.412216+00:00", "symbol": "9988.HK", "detail": {"action": "buy", "score": 0.95, "price": 143.0}}
+{"event": "signal", "at": "2026-05-14T01:09:53.412573+00:00", "symbol": "3690.HK", "detail": {"action": "buy", "score": 0.862, "price": 90.0}}
+{"event": "signal", "at": "2026-05-14T01:09:53.414315+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.714, "price": 32.2}}
+{"event": "signal", "at": "2026-05-14T01:09:53.414868+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.649, "price": 429.0}}
+{"event": "signal", "at": "2026-05-14T01:09:53.415377+00:00", "symbol": "AMZN.US", "detail": {"action": "buy", "score": 0.604, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T01:09:53.424354+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.603, "price": 463.0}}
+{"event": "signal", "at": "2026-05-14T01:09:53.424872+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.26, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T01:09:53.425214+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.251, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T01:09:53.435008+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.247, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T01:09:53.435558+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.245, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T01:09:53.436007+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.242, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T01:09:53.443845+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.233, "price": 225.83}}
+{"event": "proposal", "at": "2026-05-14T01:09:53.444353+00:00", "symbol": "9988.HK", "detail": {"side": "buy", "quantity": 0.559441, "price": 143.0, "confidence": 0.95}}
+{"event": "fail", "at": "2026-05-14T01:09:53.452810+00:00", "symbol": "9988.HK", "detail": {"side": "buy", "quantity": 0.559441, "price": 143.0, "error": "Insufficient paper cash."}}
+{"event": "tick", "at": "2026-05-14T02:15:47.446978+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 20}}}
+{"event": "signal", "at": "2026-05-14T02:15:47.452726+00:00", "symbol": "9988.HK", "detail": {"action": "buy", "score": 0.95, "price": 144.17}}
+{"event": "signal", "at": "2026-05-14T02:15:47.453383+00:00", "symbol": "3690.HK", "detail": {"action": "buy", "score": 0.95, "price": 89.15}}
+{"event": "signal", "at": "2026-05-14T02:15:47.453863+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.747, "price": 32.15}}
+{"event": "signal", "at": "2026-05-14T02:15:47.454393+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.718, "price": 427.04}}
+{"event": "signal", "at": "2026-05-14T02:15:47.454951+00:00", "symbol": "META.US", "detail": {"action": "buy", "score": 0.63, "price": 622.55}}
+{"event": "signal", "at": "2026-05-14T02:15:47.455563+00:00", "symbol": "GOOGL.US", "detail": {"action": "buy", "score": 0.619, "price": 404.19}}
+{"event": "signal", "at": "2026-05-14T02:15:47.456111+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.254, "price": 270.75}}
+{"event": "signal", "at": "2026-05-14T02:15:47.456617+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.239, "price": 404.76}}
+{"event": "signal", "at": "2026-05-14T02:15:47.457370+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.238, "price": 460.2}}
+{"event": "signal", "at": "2026-05-14T02:15:47.458099+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.237, "price": 226.07}}
+{"event": "signal", "at": "2026-05-14T02:15:47.474735+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.224, "price": 444.77}}
+{"event": "signal", "at": "2026-05-14T02:15:47.475487+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.218, "price": 444.63}}
+{"event": "proposal", "at": "2026-05-14T02:15:47.476414+00:00", "symbol": "9988.HK", "detail": {"side": "buy", "quantity": 0.5549, "price": 144.17, "confidence": 0.95}}
+{"event": "fill", "at": "2026-05-14T02:15:47.477237+00:00", "symbol": "9988.HK", "detail": {"side": "buy", "quantity": 0.5549, "price": 144.17, "error": null}}
+{"event": "proposal", "at": "2026-05-14T02:15:47.484320+00:00", "symbol": "3690.HK", "detail": {"side": "buy", "quantity": 1e-06, "price": 89.15, "confidence": 0.95}}
+{"event": "fail", "at": "2026-05-14T02:15:47.485625+00:00", "symbol": "3690.HK", "detail": {"side": "buy", "quantity": 1e-06, "price": 89.15, "error": "Insufficient paper cash."}}
+{"event": "tick", "at": "2026-05-14T02:16:08.553889+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:16:08.564761+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.756, "price": 32.24}}
+{"event": "signal", "at": "2026-05-14T02:16:08.568551+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.715, "price": 428.6}}
+{"event": "signal", "at": "2026-05-14T02:16:08.576012+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.704, "price": 470.0}}
+{"event": "signal", "at": "2026-05-14T02:16:08.588554+00:00", "symbol": "3690.HK", "detail": {"action": "buy", "score": 0.631, "price": 87.8}}
+{"event": "signal", "at": "2026-05-14T02:16:08.590017+00:00", "symbol": "META.US", "detail": {"action": "buy", "score": 0.591, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:16:08.592798+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.5, "price": 139.9}}
+{"event": "signal", "at": "2026-05-14T02:16:08.601645+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.26, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:16:08.619715+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.259, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:16:08.621778+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.246, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:16:08.623888+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.233, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:16:08.625807+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.223, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:16:08.626294+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.222, "price": 225.83}}
+{"event": "tick", "at": "2026-05-14T02:16:18.715395+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:16:18.721333+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.829, "price": 470.2}}
+{"event": "signal", "at": "2026-05-14T02:16:18.721654+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.811, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:16:18.727934+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.756, "price": 32.24}}
+{"event": "signal", "at": "2026-05-14T02:16:18.728404+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.724, "price": 428.6}}
+{"event": "signal", "at": "2026-05-14T02:16:18.736890+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.5, "price": 139.6}}
+{"event": "signal", "at": "2026-05-14T02:16:18.737534+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.252, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:16:18.737862+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:16:18.747183+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.249, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:16:18.747518+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:16:18.747783+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.241, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:16:18.757495+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.239, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:16:18.757963+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.231, "price": 445.5}}
+{"event": "tick", "at": "2026-05-14T02:16:28.823659+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:16:28.840561+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.809, "price": 470.2}}
+{"event": "signal", "at": "2026-05-14T02:16:28.841063+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.8, "price": 87.15}}
+{"event": "signal", "at": "2026-05-14T02:16:28.951362+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.753, "price": 32.28}}
+{"event": "signal", "at": "2026-05-14T02:16:28.971366+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.709, "price": 428.6}}
+{"event": "signal", "at": "2026-05-14T02:16:28.971769+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.5, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:16:28.972060+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.252, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:16:28.981725+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:16:28.982141+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.249, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:16:28.982437+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:16:28.998800+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.241, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:16:28.999507+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.24, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:16:28.999880+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.232, "price": 445.5}}
+{"event": "tick", "at": "2026-05-14T02:16:39.068649+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:16:39.078396+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.8, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:16:39.078986+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.782, "price": 470.0}}
+{"event": "signal", "at": "2026-05-14T02:16:39.079456+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.741, "price": 32.28}}
+{"event": "signal", "at": "2026-05-14T02:16:39.079769+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.694, "price": 428.6}}
+{"event": "signal", "at": "2026-05-14T02:16:39.080434+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.5, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:16:39.080853+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.251, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:16:39.081146+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:16:39.081495+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:16:39.081889+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:16:39.082166+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.241, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:16:39.082579+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.239, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:16:39.082987+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.233, "price": 445.5}}
+{"event": "tick", "at": "2026-05-14T02:16:49.147627+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:16:49.159999+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.786, "price": 87.1}}
+{"event": "signal", "at": "2026-05-14T02:16:49.160545+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.74, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:16:49.161101+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.721, "price": 32.28}}
+{"event": "signal", "at": "2026-05-14T02:16:49.161792+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.679, "price": 428.6}}
+{"event": "signal", "at": "2026-05-14T02:16:49.162848+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.482, "price": 139.6}}
+{"event": "signal", "at": "2026-05-14T02:16:49.163456+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:16:49.164171+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:16:49.165444+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:16:49.166015+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:16:49.166737+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.241, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:16:49.168979+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.238, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:16:49.171422+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.234, "price": 445.5}}
+{"event": "tick", "at": "2026-05-14T02:16:59.237495+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:16:59.252320+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.776, "price": 87.1}}
+{"event": "signal", "at": "2026-05-14T02:16:59.253117+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.709, "price": 469.2}}
+{"event": "signal", "at": "2026-05-14T02:16:59.253876+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.7, "price": 32.28}}
+{"event": "signal", "at": "2026-05-14T02:16:59.254516+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.663, "price": 428.6}}
+{"event": "signal", "at": "2026-05-14T02:16:59.255021+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.444, "price": 139.6}}
+{"event": "signal", "at": "2026-05-14T02:16:59.255444+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:16:59.255916+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:16:59.256452+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:16:59.256867+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:16:59.257251+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.242, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:16:59.257752+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.235, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:16:59.258749+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.232, "price": 87.8}}
+{"event": "tick", "at": "2026-05-14T02:17:09.313270+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:17:09.321319+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.773, "price": 87.1}}
+{"event": "signal", "at": "2026-05-14T02:17:09.321679+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.692, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:17:09.321974+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.688, "price": 32.3}}
+{"event": "signal", "at": "2026-05-14T02:17:09.322360+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.643, "price": 428.4}}
+{"event": "signal", "at": "2026-05-14T02:17:09.322904+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.414, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:17:09.323343+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.251, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:17:09.324004+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:17:09.324655+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.249, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:17:09.325725+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:17:09.326428+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.243, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:17:09.327162+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.237, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:17:09.327629+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.232, "price": 225.83}}
+{"event": "tick", "at": "2026-05-14T02:17:19.382436+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:17:19.389687+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.781, "price": 87.15}}
+{"event": "signal", "at": "2026-05-14T02:17:19.390840+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.673, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:17:19.391285+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.671, "price": 32.3}}
+{"event": "signal", "at": "2026-05-14T02:17:19.397061+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.625, "price": 428.4}}
+{"event": "signal", "at": "2026-05-14T02:17:19.397625+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.39, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:17:19.398068+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.252, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:17:19.398640+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.251, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:17:19.399116+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.249, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:17:19.399554+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:17:19.400131+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.244, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:17:19.400744+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.238, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:17:19.401280+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.235, "price": 225.83}}
+{"event": "tick", "at": "2026-05-14T02:17:29.453123+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:17:29.460377+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.771, "price": 87.1}}
+{"event": "signal", "at": "2026-05-14T02:17:29.460731+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.657, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:17:29.470305+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.654, "price": 32.32}}
+{"event": "signal", "at": "2026-05-14T02:17:29.470726+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.611, "price": 428.4}}
+{"event": "signal", "at": "2026-05-14T02:17:29.470985+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.36, "price": 139.9}}
+{"event": "signal", "at": "2026-05-14T02:17:29.471234+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.252, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:17:29.471478+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.251, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:17:29.471728+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.249, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:17:29.471961+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:17:29.472295+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.245, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:17:29.472533+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.24, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:17:29.472820+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.237, "price": 225.83}}
+{"event": "tick", "at": "2026-05-14T02:17:39.523090+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:17:39.527705+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.765, "price": 87.1}}
+{"event": "signal", "at": "2026-05-14T02:17:39.528000+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.644, "price": 32.34}}
+{"event": "signal", "at": "2026-05-14T02:17:39.528261+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.634, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:17:39.528528+00:00", "symbol": "388.HK", "detail": {"action": "buy", "score": 0.591, "price": 428.2}}
+{"event": "signal", "at": "2026-05-14T02:17:39.528778+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.326, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:17:39.529025+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.253, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:17:39.529273+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.251, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:17:39.529520+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.248, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:17:39.529881+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:17:39.530175+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.245, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:17:39.530489+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.242, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:17:39.530788+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.24, "price": 225.83}}
+{"event": "tick", "at": "2026-05-14T02:17:49.584377+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:17:49.590493+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.77, "price": 87.15}}
+{"event": "signal", "at": "2026-05-14T02:17:49.590917+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.63, "price": 32.34}}
+{"event": "signal", "at": "2026-05-14T02:17:49.591274+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.613, "price": 469.2}}
+{"event": "signal", "at": "2026-05-14T02:17:49.591678+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.287, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:17:49.591986+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.262, "price": 428.2}}
+{"event": "signal", "at": "2026-05-14T02:17:49.592247+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.254, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:17:49.592488+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.251, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:17:49.592727+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.248, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:17:49.592967+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:17:49.593203+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.246, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:17:49.593437+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.244, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:17:49.593737+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.242, "price": 225.83}}
+{"event": "tick", "at": "2026-05-14T02:17:51.937511+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:17:51.943888+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.775, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:17:51.944196+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.619, "price": 32.34}}
+{"event": "signal", "at": "2026-05-14T02:17:51.944616+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.6, "price": 469.2}}
+{"event": "signal", "at": "2026-05-14T02:17:51.944877+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.27, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:17:51.945117+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.259, "price": 428.2}}
+{"event": "signal", "at": "2026-05-14T02:17:51.945357+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.254, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:17:51.945591+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.251, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:17:51.945861+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.248, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:17:51.946138+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:17:51.946388+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.246, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:17:51.946635+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.245, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:17:51.946880+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.244, "price": 225.83}}
+{"event": "tick", "at": "2026-05-14T02:17:59.646080+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:17:59.652615+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.779, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:17:59.653019+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.27, "price": 32.32}}
+{"event": "signal", "at": "2026-05-14T02:17:59.653343+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.267, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:17:59.653612+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.255, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:17:59.653874+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.252, "price": 428.2}}
+{"event": "signal", "at": "2026-05-14T02:17:59.654135+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.251, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:17:59.654467+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.248, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:17:59.654842+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.248, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:17:59.655124+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.247, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:17:59.655482+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.247, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:17:59.655748+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.246, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:17:59.656001+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.245, "price": 445.27}}
+{"event": "tick", "at": "2026-05-14T02:18:09.708209+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:18:09.713294+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.724, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:18:09.713690+00:00", "symbol": "9988.HK", "detail": {"action": "sell", "score": 0.594, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:18:09.713978+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.262, "price": 32.32}}
+{"event": "signal", "at": "2026-05-14T02:18:09.714356+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.26, "price": 469.2}}
+{"event": "signal", "at": "2026-05-14T02:18:09.714668+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.254, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:18:09.714983+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.251, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:18:09.715699+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.251, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:18:09.716328+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:18:09.716753+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.249, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:18:09.717045+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.248, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:18:09.717323+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:18:09.717589+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.245, "price": 616.63}}
+{"event": "tick", "at": "2026-05-14T02:18:14.817443+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:18:14.821471+00:00", "symbol": "1299.HK", "detail": {"action": "buy", "score": 0.671, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:18:14.821818+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.257, "price": 32.28}}
+{"event": "signal", "at": "2026-05-14T02:18:14.822094+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.256, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:18:14.822358+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.254, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:18:14.822608+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.251, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:18:14.822853+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.251, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:18:14.823087+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:18:14.823335+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.249, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:18:14.823578+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.248, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:18:14.823820+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.246, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:18:14.824062+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.245, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:18:14.824301+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.244, "price": 428.2}}
+{"event": "tick", "at": "2026-05-14T02:18:19.770667+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:18:19.773924+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.255, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:18:19.774275+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.254, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:18:19.774567+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:18:19.774926+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:18:19.775195+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:18:19.775458+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:18:19.775692+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:18:19.775921+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:18:19.776148+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:18:19.776375+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:18:19.776602+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:18:19.776829+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.246, "price": 469.2}}
+{"event": "tick", "at": "2026-05-14T02:18:22.349420+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:18:22.353562+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.255, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:18:22.353925+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:18:22.354265+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.252, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:18:22.354618+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:18:22.354914+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:18:22.355186+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:18:22.355452+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:18:22.355714+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:18:22.355982+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:18:22.356242+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:18:22.356502+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:18:22.356759+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.247, "price": 469.4}}
+{"event": "tick", "at": "2026-05-14T02:18:29.830185+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:18:29.834747+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.255, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:18:29.835109+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.254, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:18:29.835403+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:18:29.835700+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:18:29.835945+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:18:29.836254+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:18:29.836499+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:18:29.836740+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:18:29.836996+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:18:29.837246+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:18:29.837490+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:18:29.837736+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.248, "price": 469.4}}
+{"event": "tick", "at": "2026-05-14T02:18:39.888885+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:18:39.893482+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.255, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:18:39.893890+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:18:39.894260+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.251, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:18:39.894604+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.25, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:18:39.894947+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:18:39.895246+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:18:39.895543+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:18:39.895838+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:18:39.896130+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:18:39.896424+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:18:39.896716+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:18:39.897017+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "tick", "at": "2026-05-14T02:18:49.949228+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:18:49.953171+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.254, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:18:49.953578+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.251, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:18:49.953885+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:18:49.954193+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:18:49.954485+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:18:49.954777+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:18:49.955081+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:18:49.955414+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:18:49.955679+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:18:49.955939+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:18:49.956199+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.249, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:18:49.956466+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.249, "price": 87.8}}
+{"event": "tick", "at": "2026-05-14T02:19:00.009017+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:19:00.012506+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.251, "price": 87.15}}
+{"event": "signal", "at": "2026-05-14T02:19:00.013038+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:19:00.013590+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:19:00.013989+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:19:00.014454+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:19:00.014999+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:19:00.015530+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:19:00.015890+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:19:00.016222+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:19:00.016528+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.249, "price": 469.2}}
+{"event": "signal", "at": "2026-05-14T02:19:00.016857+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.246, "price": 139.7}}
+{"event": "signal", "at": "2026-05-14T02:19:00.017136+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.245, "price": 87.75}}
+{"event": "tick", "at": "2026-05-14T02:19:10.071078+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:19:10.075796+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:19:10.076173+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:19:10.076525+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:19:10.076861+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:19:10.077192+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:19:10.077524+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:19:10.077840+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:19:10.078137+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:19:10.078437+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.248, "price": 87.15}}
+{"event": "signal", "at": "2026-05-14T02:19:10.078807+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.244, "price": 468.8}}
+{"event": "signal", "at": "2026-05-14T02:19:10.079170+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.243, "price": 427.8}}
+{"event": "signal", "at": "2026-05-14T02:19:10.079520+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.241, "price": 139.7}}
+{"event": "tick", "at": "2026-05-14T02:19:20.131688+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:19:20.136069+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:19:20.136541+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:19:20.136915+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:19:20.137242+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:19:20.137508+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:19:20.137772+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:19:20.138045+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:19:20.138281+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:19:20.138515+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.248, "price": 87.15}}
+{"event": "signal", "at": "2026-05-14T02:19:20.138750+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.245, "price": 139.7}}
+{"event": "signal", "at": "2026-05-14T02:19:20.139032+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.243, "price": 469.0}}
+{"event": "signal", "at": "2026-05-14T02:19:20.139408+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.243, "price": 427.8}}
+{"event": "tick", "at": "2026-05-14T02:19:30.191192+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:19:30.194385+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:19:30.194801+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:19:30.195200+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:19:30.195477+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:19:30.195834+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:19:30.196370+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:19:30.196706+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:19:30.197147+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:19:30.198041+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.248, "price": 87.15}}
+{"event": "signal", "at": "2026-05-14T02:19:30.198324+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.245, "price": 469.0}}
+{"event": "signal", "at": "2026-05-14T02:19:30.198587+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.244, "price": 427.8}}
+{"event": "signal", "at": "2026-05-14T02:19:30.198977+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.244, "price": 139.7}}
+{"event": "tick", "at": "2026-05-14T02:19:40.251403+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:19:40.255166+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.251, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:19:40.255535+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:19:40.255844+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:19:40.256138+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:19:40.256417+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:19:40.256690+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:19:40.256961+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:19:40.257227+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:19:40.257504+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:19:40.257745+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.245, "price": 427.8}}
+{"event": "signal", "at": "2026-05-14T02:19:40.257986+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.244, "price": 139.7}}
+{"event": "signal", "at": "2026-05-14T02:19:40.258224+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.242, "price": 468.8}}
+{"event": "tick", "at": "2026-05-14T02:19:50.311703+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:19:50.316516+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:19:50.317001+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:19:50.317350+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:19:50.317687+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:19:50.318003+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:19:50.318294+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:19:50.318583+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:19:50.318871+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:19:50.319159+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:19:50.319447+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.245, "price": 427.8}}
+{"event": "signal", "at": "2026-05-14T02:19:50.319734+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.242, "price": 468.8}}
+{"event": "signal", "at": "2026-05-14T02:19:50.320022+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.241, "price": 139.6}}
+{"event": "tick", "at": "2026-05-14T02:20:00.374798+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:20:00.380233+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:20:00.381013+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:20:00.381314+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:20:00.381597+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:20:00.381859+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:20:00.382235+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:20:00.382544+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:20:00.382798+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:20:00.383045+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:20:00.383293+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.249, "price": 428.0}}
+{"event": "signal", "at": "2026-05-14T02:20:00.383542+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.244, "price": 87.75}}
+{"event": "signal", "at": "2026-05-14T02:20:00.383788+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.24, "price": 139.6}}
+{"event": "tick", "at": "2026-05-14T02:20:10.435885+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:20:10.440610+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.254, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:20:10.440978+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:20:10.441336+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:20:10.441677+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:20:10.442014+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:20:10.442361+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:20:10.442669+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:20:10.443035+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:20:10.443340+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:20:10.443639+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:20:10.444055+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.248, "price": 427.8}}
+{"event": "signal", "at": "2026-05-14T02:20:10.444390+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.245, "price": 139.7}}
+{"event": "tick", "at": "2026-05-14T02:20:20.498348+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:20:20.502227+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.257, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:20:20.502553+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.252, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:20:20.502855+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:20:20.503243+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:20:20.503551+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:20:20.503840+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:20:20.504100+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:20:20.504358+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:20:20.504617+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:20:20.504874+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:20:20.505131+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:20:20.505387+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.247, "price": 427.8}}
+{"event": "tick", "at": "2026-05-14T02:20:30.555091+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:20:30.559976+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.257, "price": 87.85}}
+{"event": "signal", "at": "2026-05-14T02:20:30.560500+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.257, "price": 139.8}}
+{"event": "signal", "at": "2026-05-14T02:20:30.560880+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:20:30.561245+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:20:30.561601+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:20:30.561951+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:20:30.562277+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:20:30.562576+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:20:30.562880+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:20:30.563252+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "signal", "at": "2026-05-14T02:20:30.563561+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.248, "price": 87.15}}
+{"event": "signal", "at": "2026-05-14T02:20:30.563867+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.247, "price": 427.8}}
+{"event": "tick", "at": "2026-05-14T02:20:40.619190+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:20:40.624897+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.267, "price": 88.0}}
+{"event": "signal", "at": "2026-05-14T02:20:40.625338+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.263, "price": 140.0}}
+{"event": "signal", "at": "2026-05-14T02:20:40.625769+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.251, "price": 428.0}}
+{"event": "signal", "at": "2026-05-14T02:20:40.626268+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:20:40.626717+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:20:40.627070+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:20:40.627414+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:20:40.627694+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:20:40.627941+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:20:40.628182+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:20:40.628460+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:20:40.628722+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "tick", "at": "2026-05-14T02:20:50.680348+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:20:50.685433+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.271, "price": 140.1}}
+{"event": "signal", "at": "2026-05-14T02:20:50.685909+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.265, "price": 87.9}}
+{"event": "signal", "at": "2026-05-14T02:20:50.686289+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.252, "price": 428.0}}
+{"event": "signal", "at": "2026-05-14T02:20:50.686646+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:20:50.687003+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:20:50.687428+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:20:50.687755+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:20:50.688063+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:20:50.688366+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:20:50.688664+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:20:50.688962+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:20:50.689257+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "tick", "at": "2026-05-14T02:21:00.740913+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:21:00.746176+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.268, "price": 140.0}}
+{"event": "signal", "at": "2026-05-14T02:21:00.746540+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.259, "price": 87.9}}
+{"event": "signal", "at": "2026-05-14T02:21:00.746873+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.252, "price": 428.0}}
+{"event": "signal", "at": "2026-05-14T02:21:00.747159+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.252, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:21:00.747470+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.251, "price": 32.24}}
+{"event": "signal", "at": "2026-05-14T02:21:00.747726+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:21:00.747987+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:21:00.748233+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:21:00.748542+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:21:00.748801+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:21:00.749054+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:21:00.749296+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "tick", "at": "2026-05-14T02:21:10.802868+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:21:10.806932+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.271, "price": 140.2}}
+{"event": "signal", "at": "2026-05-14T02:21:10.807391+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.261, "price": 87.9}}
+{"event": "signal", "at": "2026-05-14T02:21:10.807746+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.255, "price": 32.24}}
+{"event": "signal", "at": "2026-05-14T02:21:10.808141+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.252, "price": 428.0}}
+{"event": "signal", "at": "2026-05-14T02:21:10.808486+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:21:10.808800+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:21:10.809103+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:21:10.809467+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:21:10.809752+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:21:10.810016+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:21:10.810277+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "signal", "at": "2026-05-14T02:21:10.810538+00:00", "symbol": "TSLA.US", "detail": {"action": "watch", "score": 0.25, "price": 445.27}}
+{"event": "tick", "at": "2026-05-14T02:21:20.862840+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:21:20.866082+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.281, "price": 140.3}}
+{"event": "signal", "at": "2026-05-14T02:21:20.866412+00:00", "symbol": "3690.HK", "detail": {"action": "watch", "score": 0.267, "price": 88.05}}
+{"event": "signal", "at": "2026-05-14T02:21:20.866780+00:00", "symbol": "700.HK", "detail": {"action": "watch", "score": 0.258, "price": 469.4}}
+{"event": "signal", "at": "2026-05-14T02:21:20.867110+00:00", "symbol": "1810.HK", "detail": {"action": "watch", "score": 0.257, "price": 32.26}}
+{"event": "signal", "at": "2026-05-14T02:21:20.867358+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.254, "price": 428.2}}
+{"event": "signal", "at": "2026-05-14T02:21:20.867607+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:21:20.867856+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:21:20.868103+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:21:20.868348+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:21:20.868590+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:21:20.868970+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:21:20.869209+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "tick", "at": "2026-05-14T02:21:30.921521+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:21:30.926747+00:00", "symbol": "3690.HK", "detail": {"action": "buy", "score": 0.612, "price": 88.15}}
+{"event": "signal", "at": "2026-05-14T02:21:30.927465+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.598, "price": 470.0}}
+{"event": "signal", "at": "2026-05-14T02:21:30.927976+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.595, "price": 32.32}}
+{"event": "signal", "at": "2026-05-14T02:21:30.928339+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.284, "price": 140.4}}
+{"event": "signal", "at": "2026-05-14T02:21:30.928769+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.258, "price": 428.2}}
+{"event": "signal", "at": "2026-05-14T02:21:30.929084+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:21:30.929545+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:21:30.929870+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:21:30.930176+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:21:30.930475+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:21:30.930748+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "signal", "at": "2026-05-14T02:21:30.931009+00:00", "symbol": "GOOGL.US", "detail": {"action": "watch", "score": 0.25, "price": 402.62}}
+{"event": "tick", "at": "2026-05-14T02:21:40.984122+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "signal", "at": "2026-05-14T02:21:40.987668+00:00", "symbol": "700.HK", "detail": {"action": "buy", "score": 0.616, "price": 470.6}}
+{"event": "signal", "at": "2026-05-14T02:21:40.988030+00:00", "symbol": "3690.HK", "detail": {"action": "buy", "score": 0.613, "price": 88.15}}
+{"event": "signal", "at": "2026-05-14T02:21:40.988316+00:00", "symbol": "1810.HK", "detail": {"action": "buy", "score": 0.611, "price": 32.34}}
+{"event": "signal", "at": "2026-05-14T02:21:40.988611+00:00", "symbol": "9988.HK", "detail": {"action": "watch", "score": 0.283, "price": 140.4}}
+{"event": "signal", "at": "2026-05-14T02:21:40.988984+00:00", "symbol": "388.HK", "detail": {"action": "watch", "score": 0.253, "price": 428.0}}
+{"event": "signal", "at": "2026-05-14T02:21:40.989268+00:00", "symbol": "1299.HK", "detail": {"action": "watch", "score": 0.25, "price": 87.2}}
+{"event": "signal", "at": "2026-05-14T02:21:40.989653+00:00", "symbol": "MSFT.US", "detail": {"action": "watch", "score": 0.25, "price": 405.21}}
+{"event": "signal", "at": "2026-05-14T02:21:40.990003+00:00", "symbol": "META.US", "detail": {"action": "watch", "score": 0.25, "price": 616.63}}
+{"event": "signal", "at": "2026-05-14T02:21:40.990278+00:00", "symbol": "NVDA.US", "detail": {"action": "watch", "score": 0.25, "price": 225.83}}
+{"event": "signal", "at": "2026-05-14T02:21:40.990535+00:00", "symbol": "AAPL.US", "detail": {"action": "watch", "score": 0.25, "price": 298.87}}
+{"event": "signal", "at": "2026-05-14T02:21:40.990770+00:00", "symbol": "AMD.US", "detail": {"action": "watch", "score": 0.25, "price": 445.5}}
+{"event": "signal", "at": "2026-05-14T02:21:40.991003+00:00", "symbol": "AMZN.US", "detail": {"action": "watch", "score": 0.25, "price": 270.13}}
+{"event": "tick", "at": "2026-05-14T02:21:46.737737+00:00", "symbol": null, "detail": {"detail": {"action": "paper_reset", "starting_cash": 100.0}}}
+{"event": "tick", "at": "2026-05-14T02:21:52.571416+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "tick", "at": "2026-05-14T02:27:13.527635+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "tick", "at": "2026-05-14T02:27:14.329473+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "tick", "at": "2026-05-14T02:27:14.509979+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "tick", "at": "2026-05-14T02:27:14.698115+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "tick", "at": "2026-05-14T02:27:14.876301+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 20, "quotes": 14}}}
+{"event": "tick", "at": "2026-05-14T02:34:55.552257+00:00", "symbol": null, "detail": {"detail": {"action": "paper_reset", "starting_cash": 100.0}}}
+{"event": "tick", "at": "2026-05-14T02:34:59.269129+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 123, "quotes": 91}}}
+{"event": "tick", "at": "2026-05-14T02:34:59.408334+00:00", "symbol": null, "detail": {"detail": {"symbols_count": 123, "quotes": 91}}}

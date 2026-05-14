@@ -56,11 +56,11 @@ function render(data) {
   });
 
   // Metrics
-  const equity = portfolio.cash + Object.values(portfolio.positions).reduce((s, p) => {
+  const holdings = Object.values(portfolio.positions).reduce((s, p) => {
     return s + p.quantity * (portfolio.last_prices[p.symbol] || p.avg_cost);
   }, 0);
   document.querySelector("#cash").textContent = money(portfolio.cash);
-  document.querySelector("#equity").textContent = money(equity);
+  document.querySelector("#holdings").textContent = money(holdings);
   paintPnl("#realized", portfolio.realized_pnl);
   paintPnl("#unrealized", unrealizedPnl(portfolio));
   paintPnl("#sessionPnl", session_pnl);

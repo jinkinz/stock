@@ -172,9 +172,56 @@ class AuditEntry:
 
 
 DEFAULT_UNIVERSES = {
-    "US": ["AAPL.US", "MSFT.US", "NVDA.US", "TSLA.US", "AMD.US", "META.US", "GOOGL.US", "AMZN.US"],
-    "HK": ["700.HK", "9988.HK", "3690.HK", "1810.HK", "1299.HK", "388.HK"],
-    "SG": ["D05.SG", "O39.SG", "U11.SG", "C38U.SG", "Z74.SG", "S68.SG"],
+    # 50 most liquid US stocks across tech, finance, consumer, energy, health
+    "US": [
+        # Mega-cap tech
+        "AAPL.US", "MSFT.US", "NVDA.US", "GOOGL.US", "AMZN.US", "META.US",
+        "TSLA.US", "AMD.US", "INTC.US", "QCOM.US", "AVGO.US", "TXN.US",
+        "CRM.US", "ORCL.US", "ADBE.US", "NOW.US", "SNOW.US", "PLTR.US",
+        # Finance
+        "JPM.US", "BAC.US", "GS.US", "MS.US", "WFC.US", "C.US",
+        "V.US", "MA.US", "PYPL.US", "SQ.US", "COIN.US",
+        # Consumer / retail
+        "WMT.US", "COST.US", "TGT.US", "HD.US", "MCD.US", "SBUX.US",
+        "NKE.US", "DIS.US", "NFLX.US", "SPOT.US",
+        # Health / pharma
+        "JNJ.US", "PFE.US", "MRNA.US", "ABBV.US", "LLY.US", "UNH.US",
+        # Energy / industrial
+        "XOM.US", "CVX.US", "CAT.US", "BA.US", "GE.US", "F.US",
+    ],
+    # 40 most liquid HK stocks — HSI constituents + large caps
+    "HK": [
+        # Tech / internet
+        "700.HK", "9988.HK", "3690.HK", "1810.HK", "9618.HK", "9999.HK",
+        "1024.HK", "2015.HK", "6690.HK", "9961.HK", "9626.HK", "2382.HK",
+        # Finance / banking
+        "1398.HK", "939.HK", "3988.HK", "2318.HK", "1299.HK", "2628.HK",
+        "388.HK", "5.HK", "11.HK", "2388.HK", "6881.HK",
+        # Property / infrastructure
+        "1.HK", "16.HK", "688.HK", "101.HK", "823.HK", "778.HK",
+        # Consumer / retail
+        "9922.HK", "6862.HK", "1929.HK", "291.HK", "762.HK",
+        # Energy / utilities
+        "857.HK", "883.HK", "2.HK", "6.HK", "3.HK",
+        # Healthcare
+        "1177.HK", "2269.HK",
+    ],
+    # 30 most liquid SG stocks — STI constituents + REITs
+    "SG": [
+        # Banks (biggest by volume)
+        "D05.SG", "O39.SG", "U11.SG",
+        # REITs
+        "C38U.SG", "A17U.SG", "ME8U.SG", "N2IU.SG", "T82U.SG",
+        "BUOU.SG", "K71U.SG", "J91U.SG", "SK6U.SG", "AW9U.SG",
+        # Telcos / tech
+        "Z74.SG", "T39.SG", "BN4.SG",
+        # Industrial / transport
+        "S68.SG", "C6L.SG", "U96.SG", "C52.SG", "BS6.SG",
+        # Consumer / property
+        "F34.SG", "H78.SG", "C09.SG", "S58.SG", "U14.SG",
+        # Healthcare / others
+        "Q0F.SG", "5E2.SG", "V03.SG", "BVA.SG", "42F.SG",
+    ],
 }
 
 
