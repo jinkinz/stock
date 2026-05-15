@@ -10,46 +10,23 @@
   <body>
     <div class="app">
 
-      <!-- ── LEFT SIDEBAR: Settings ── -->
+      <!-- ── LEFT SIDEBAR ── -->
       <aside class="sidebar">
         <div class="sidebar-logo">
           <span class="logo-text">AI Trading</span>
           <span id="liveDot" class="live-dot" title="Connecting…"></span>
         </div>
 
-        <!-- Connection status -->
         <div class="sidebar-status">
-          <div class="status-row">
-            <span class="status-label">Mode</span>
-            <span id="modeLabel" class="status-val">—</span>
-          </div>
-          <div class="status-row">
-            <span class="status-label">AI Brain</span>
-            <span id="aiStatus" class="status-val">—</span>
-          </div>
-          <div class="status-row">
-            <span class="status-label">Longbridge</span>
-            <span id="lbStatus" class="status-val">—</span>
-          </div>
-          <div class="status-row">
-            <span class="status-label">Quote</span>
-            <span id="quoteSource" class="status-val">—</span>
-          </div>
-          <div class="status-row">
-            <span class="status-label">Universe</span>
-            <span id="universeSource" class="status-val">—</span>
-          </div>
-          <div class="status-row">
-            <span class="status-label">Last tick</span>
-            <span id="lastTick" class="status-val">Never</span>
-          </div>
-          <div class="status-row">
-            <span class="status-label">Scanned</span>
-            <span id="scanned" class="status-val">0</span>
-          </div>
+          <div class="status-row"><span class="status-label">Mode</span><span id="modeLabel" class="status-val">—</span></div>
+          <div class="status-row"><span class="status-label">AI Brain</span><span id="aiStatus" class="status-val">—</span></div>
+          <div class="status-row"><span class="status-label">Longbridge</span><span id="lbStatus" class="status-val">—</span></div>
+          <div class="status-row"><span class="status-label">Quote</span><span id="quoteSource" class="status-val">—</span></div>
+          <div class="status-row"><span class="status-label">Universe</span><span id="universeSource" class="status-val">—</span></div>
+          <div class="status-row"><span class="status-label">Last tick</span><span id="lastTick" class="status-val">Never</span></div>
+          <div class="status-row"><span class="status-label">Scanned</span><span id="scanned" class="status-val">0</span></div>
         </div>
 
-        <!-- Session controls -->
         <div class="sidebar-section-label">Session</div>
         <div class="session-controls">
           <button id="startSessionBtn" class="btn-session-start wide">▶ Start Session</button>
@@ -58,7 +35,6 @@
           <button id="pauseButton"     class="btn-pause         wide">⏸ Stop Auto-Tick</button>
         </div>
 
-        <!-- Settings form -->
         <div class="sidebar-section-label">Settings</div>
         <form id="settingsForm" class="settings-form">
           <div class="field">
@@ -109,105 +85,94 @@
           <button class="btn-primary wide" type="submit">Save Settings</button>
         </form>
 
-        <!-- Danger zone -->
-        <div class="sidebar-section-label" style="margin-top:auto">Danger Zone</div>
+        <div class="sidebar-section-label">Danger Zone</div>
         <div class="danger-zone">
           <button id="resetPaperButton" class="btn-danger wide">Reset Paper Account</button>
           <button id="backtestButton"   class="btn-secondary wide">Run Backtest</button>
         </div>
       </aside>
 
-      <!-- ── MAIN CONTENT ── -->
+      <!-- ── MAIN ── -->
       <main class="main">
 
-        <!-- Row 1: Account summary strip -->
+        <!-- Account strip -->
         <section class="account-strip">
-          <div class="acct-stat">
-            <div class="acct-label">Cash Available</div>
-            <div class="acct-value" id="cash">—</div>
-          </div>
+          <div class="acct-stat"><div class="acct-label">Cash Available</div><div class="acct-value" id="cash">—</div></div>
           <div class="acct-divider"></div>
-          <div class="acct-stat">
-            <div class="acct-label">Holdings Value</div>
-            <div class="acct-value" id="holdings">—</div>
-          </div>
+          <div class="acct-stat"><div class="acct-label">Holdings Value</div><div class="acct-value" id="holdings">—</div></div>
           <div class="acct-divider"></div>
-          <div class="acct-stat">
-            <div class="acct-label">Session P&L</div>
-            <div class="acct-value" id="sessionPnl">—</div>
-          </div>
+          <div class="acct-stat"><div class="acct-label">Session P&L</div><div class="acct-value" id="sessionPnl">—</div></div>
           <div class="acct-divider"></div>
-          <div class="acct-stat">
-            <div class="acct-label">Unrealized P&L</div>
-            <div class="acct-value" id="unrealized">—</div>
-          </div>
+          <div class="acct-stat"><div class="acct-label">Unrealized P&L</div><div class="acct-value" id="unrealized">—</div></div>
           <div class="acct-divider"></div>
-          <div class="acct-stat">
-            <div class="acct-label">Realized P&L</div>
-            <div class="acct-value" id="realized">—</div>
-          </div>
+          <div class="acct-stat"><div class="acct-label">Realized P&L</div><div class="acct-value" id="realized">—</div></div>
           <div class="acct-divider"></div>
-          <div class="acct-stat">
-            <div class="acct-label">Session Started</div>
-            <div class="acct-value" id="sessionStart" style="font-size:14px">—</div>
-          </div>
+          <div class="acct-stat"><div class="acct-label">Session Started</div><div class="acct-value" id="sessionStart" style="font-size:14px">—</div></div>
         </section>
 
-        <!-- Row 2: Positions (most important — what AI owns) -->
-        <section class="card" id="positionsCard">
+        <!-- Positions — always visible -->
+        <section class="card">
           <div class="card-header">
             <h2>Positions <span class="badge" id="positionCount">0</span></h2>
             <span class="hint-inline">What the AI currently holds</span>
           </div>
-          <div id="positions" class="empty-state">No open positions</div>
+          <div id="positions" class="card-body">
+            <div class="empty-state">No open positions</div>
+          </div>
         </section>
 
-        <!-- Row 3: Proposals (needs attention) -->
-        <section class="card" id="proposalsCard">
+        <!-- Trade Proposals — always visible -->
+        <section class="card">
           <div class="card-header">
-            <h2>Trade Proposals <span class="badge urgent" id="proposalCount">0</span></h2>
+            <h2>Trade Proposals <span class="badge" id="proposalCount">0</span></h2>
             <span id="approvalModeLabel" class="hint-inline"></span>
           </div>
-          <div id="proposals" class="empty-state">No proposals yet</div>
+          <div id="proposals" class="card-body">
+            <div class="empty-state">No proposals yet</div>
+          </div>
         </section>
 
-        <!-- Row 4: Two columns — signals + market scan -->
+        <!-- AI Ranking + Market Scan -->
         <div class="two-col">
           <section class="card">
             <div class="card-header">
               <h2>AI Ranking <span id="signalsTs" class="section-ts"></span></h2>
               <span class="hint-inline">Momentum · 0.2% threshold</span>
             </div>
-            <div id="signals" class="empty-state">No scan yet</div>
+            <div id="signals" class="card-body">
+              <div class="empty-state">No scan yet</div>
+            </div>
           </section>
           <section class="card">
             <div class="card-header">
               <h2>Market Scan</h2>
               <span class="hint-inline">Latest prices</span>
             </div>
-            <div id="quote" class="empty-state">No quotes yet</div>
+            <div id="quote" class="card-body">
+              <div class="empty-state">No quotes yet</div>
+            </div>
           </section>
         </div>
 
-        <!-- Row 5: Diagnostics (collapsible) -->
-        <section class="card collapsible" id="diagCard">
+        <!-- Diagnostics — collapsible, starts collapsed -->
+        <section class="card collapsible collapsed" id="diagCard">
           <div class="card-header clickable" id="diagToggle">
             <h2>Diagnostics <span id="diagTs" class="section-ts"></span></h2>
             <span class="collapse-icon">▼</span>
           </div>
-          <div id="diagnostics" class="empty-state collapsible-body">No diagnostics yet</div>
-        </section>
-
-        <!-- Row 6: Backtest (hidden until run) -->
-        <section class="card" id="backtestPanel" style="display:none">
-          <div class="card-header">
-            <h2>Backtest Results</h2>
+          <div class="card-body collapsible-body" id="diagnostics">
+            <div class="empty-state">No diagnostics yet</div>
           </div>
-          <div id="backtestResult"></div>
         </section>
 
-        <!-- Row 7: Session History (collapsible) -->
-        <section class="card collapsible" id="sessionsCard">
+        <!-- Backtest — hidden until run -->
+        <section class="card" id="backtestPanel" style="display:none">
+          <div class="card-header"><h2>Backtest Results</h2></div>
+          <div class="card-body" id="backtestResult"></div>
+        </section>
+
+        <!-- Session History — collapsible, starts collapsed -->
+        <section class="card collapsible collapsed" id="sessionsCard">
           <div class="card-header clickable" id="sessionsToggle">
             <h2>Session History</h2>
             <div style="display:flex;gap:8px;align-items:center">
@@ -215,7 +180,7 @@
               <span class="collapse-icon">▼</span>
             </div>
           </div>
-          <div class="collapsible-body" style="overflow-x:auto">
+          <div class="card-body collapsible-body" style="overflow-x:auto">
             <table class="data-table" style="min-width:560px">
               <thead><tr><th>Start</th><th>End</th><th>Start Equity</th><th>End Equity</th><th>Session P&L</th></tr></thead>
               <tbody id="sessionsBody">
@@ -225,13 +190,15 @@
           </div>
         </section>
 
-        <!-- Row 8: Audit Log (collapsible) -->
-        <section class="card collapsible" id="auditCard">
+        <!-- Audit Log — collapsible, starts collapsed -->
+        <section class="card collapsible collapsed" id="auditCard">
           <div class="card-header clickable" id="auditToggle">
             <h2>Audit Log <span class="hint-inline">live</span></h2>
             <span class="collapse-icon">▼</span>
           </div>
-          <div id="auditLog" class="empty-state collapsible-body">Connecting…</div>
+          <div class="card-body collapsible-body" id="auditLog">
+            <div class="empty-state">Connecting…</div>
+          </div>
         </section>
 
       </main>

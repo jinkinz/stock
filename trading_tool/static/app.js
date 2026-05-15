@@ -377,14 +377,16 @@ function renderBacktest(result) {
 }
 
 // ─────────────────────────────────────────────
-// Collapsible panels
+// Collapsible panels — toggled by clicking header
 // ─────────────────────────────────────────────
 ["diagToggle","sessionsToggle","auditToggle"].forEach(id => {
-  const btn = el(id); if (!btn) return;
-  btn.addEventListener("click", () => btn.closest(".collapsible").classList.toggle("collapsed"));
+  const btn = el(id);
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    btn.closest(".collapsible").classList.toggle("collapsed");
+  });
 });
-el("diagCard")?.classList.add("collapsed");
-el("auditCard")?.classList.add("collapsed");
+// Note: collapsed class is set in HTML directly — no JS needed to initialise
 
 // ─────────────────────────────────────────────
 // Event wiring
