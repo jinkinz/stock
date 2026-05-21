@@ -1,0 +1,88 @@
+<!-- ── AI Provider Panel ── add inside the sidebar/settings section ── -->
+<section class="panel ai-panel">
+  <h2>AI Brain</h2>
+  <div id="aiStatus" class="ai-status-bar">Loading…</div>
+
+  <div class="field" style="margin-top:12px">
+    <label for="aiProvider">Provider</label>
+    <select id="aiProvider">
+      <option value="anthropic">Anthropic Claude</option>
+      <option value="openai">OpenAI</option>
+      <option value="gemini">Google Gemini</option>
+      <option value="openrouter">OpenRouter</option>
+      <option value="ollama">Ollama (local)</option>
+      <option value="custom">Custom / Compatible</option>
+      <option value="none">None (momentum only)</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="aiModel">Model <span style="font-weight:400;color:var(--muted)">(blank = default)</span></label>
+    <input id="aiModel" type="text" placeholder="e.g. gpt-4o, gemini-1.5-flash" />
+  </div>
+
+  <button class="primary wide" id="saveAiConfig" type="button">Apply AI Config</button>
+</section>
+
+<script>
+// Append to your existing app.js or inline here
+
+const AI_PROVIDER_DEFAULTS = {
+  anthropic: "claude-sonnet-4-20250514",
+  openai: "gpt-4o",
+  gemini: "gemini-1.5-flash",
+  openrouter: "meta-llama/llama-3.3-70b-instruct",
+  ollama: "llama3.2",
+  custom: "",
+  none: "",
+};
+
+document.querySelector("#aiProvider").addEventListener("change", (e) => {
+  const model = AI_PROVIDER_DEFAULTS[e.target.value] || "";
+  document.querySelector("#aiModel").placeholder = model ? `default: ${model}` : "enter model name";
+});
+
+document.querySelector("#saveAiConfig").addEventListener("click", async () => {
+  const provider = document.querySelector("#aiProvider").value;
+  const model = document.querySelector("#aiModel").value.trim();
+  try {
+    const data = await api("/api/ai/config", {
+      method: "POST",
+      body: JSON.stringify({ provider, model }),
+    });
+    renderAiStatus(data.ai);
+  } catch (err) {
+    document.querySelector("#aiStatus").textContent = "Error: " + err.message;
+  }
+});
+
+function renderAiStatus(ai) {
+  if (!ai) return;
+  const el = document.querySelector("#aiStatus");
+  const dot = ai.connected ? "🟢" : "🔴";
+  el.innerHTML = `${dot} <strong>${ai.provider}</strong> · ${ai.model || "—"}
+    ${ai.error ? `<br><span class="loss">${ai.error}</span>` : ""}
+    <br><span>Calls: ${ai.call_count} · Fallbacks: ${ai.fallback_count}</span>`;
+
+  // Sync selector to current provider
+  const sel = document.querySelector("#aiProvider");
+  if (sel && ai.provider) sel.value = ai.provider;
+  const modelInput = document.querySelector("#aiModel");
+  if (modelInput && ai.model) modelInput.value = ai.model;
+}
+
+// Extend the existing render() to also call renderAiStatus
+const _origRender = window.render;
+if (_origRender) {
+  window.render = function(data) {
+    _origRender(data);
+    if (data.ai) renderAiStatus(data.ai);
+  };
+}
+
+// Load providers on page load
+fetch("/api/ai/providers")
+  .then(r => r.json())
+  .then(data => renderAiStatus(data.current))
+  .catch(() => {});
+</script>

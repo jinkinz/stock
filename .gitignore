@@ -1,0 +1,4 @@
+.env
+trading_tool/state/audit_log.jsonl
+trading_tool/state/paper_state.json
+trading_tool/state/sessions_log.jsonl

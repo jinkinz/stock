@@ -1,342 +1,421 @@
 """
-AI-powered trading strategy using Claude as the decision brain.
+AI Strategy — multi-provider brain for the trading tool.
 
-Architecture:
-─────────────
-1. MomentumStrategy computes raw per-symbol metrics cheaply on every tick.
-2. AIStrategy takes the top-ranked signals + full portfolio context and sends
-   them to Claude (claude-sonnet-4-20250514) via the Anthropic API.
-3. Claude reasons about:
-     - Which signals are actually worth acting on
-     - How to spread the budget across multiple stocks (no all-in)
-     - Whether to hold, buy more, or exit existing positions
-     - Risk: volatility, concentration, max-loss proximity
-     - Confidence threshold — skip trades it's unsure about
-4. Claude returns a structured JSON decision list.
-5. Falls back to MomentumStrategy rule-based logic if API key missing or call fails.
+Supported providers (set AI_PROVIDER in .env or environment):
+  anthropic   — Claude via https://api.anthropic.com  (ANTHROPIC_API_KEY)
+  openai      — GPT-4o via https://api.openai.com     (OPENAI_API_KEY)
+  gemini      — Gemini via Google AI Studio            (GEMINI_API_KEY)
+  openrouter  — Any model via https://openrouter.ai   (OPENROUTER_API_KEY)
+  ollama      — Local Ollama server (no key needed)    (OLLAMA_BASE_URL, default http://localhost:11434)
+  custom      — Any OpenAI-compatible endpoint         (CUSTOM_AI_BASE_URL, CUSTOM_AI_API_KEY, CUSTOM_AI_MODEL)
 
-Setup:
-    Add to your .env file:
-        ANTHROPIC_API_KEY=sk-ant-...
-
-Constraints enforced regardless of AI decision:
-    - Only BUY with available cash (no margin, no borrowing)
-    - Only SELL what is held (no shorting)
-    - Max trade value per position respected
-    - Max loss circuit-breaker respected
+The provider + model can also be changed live from the UI via POST /api/ai/config.
+Falls back to MomentumStrategy if the selected provider is unavailable.
 """
+
 from __future__ import annotations
 
 import json
-import math
 import os
 import time
-from collections import deque
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
 from typing import Any
 
-from .broker import affordable_quantity
-from .models import (
-    Diagnostics, OrderProposal, Portfolio, Quote, Settings, Side, Signal,
-)
-from .strategy import MomentumStrategy, PROPOSAL_TTL_SECONDS
-
-# Re-export so app.py can import from one place
-__all__ = ["AIStrategy", "PROPOSAL_TTL_SECONDS"]
+from .models import OrderProposal, Portfolio, Settings, Side
+from .strategy import MomentumStrategy
 
 # ---------------------------------------------------------------------------
-# AI connection status — surfaced to UI
+# Provider registry
 # ---------------------------------------------------------------------------
-AI_STATUS: dict[str, Any] = {
-    "enabled": False,
-    "model": "claude-sonnet-4-20250514",
-    "last_call_at": None,
-    "last_error": None,
-    "calls_this_session": 0,
+
+PROVIDERS: dict[str, dict] = {
+    "anthropic": {
+        "label": "Anthropic Claude",
+        "env_key": "ANTHROPIC_API_KEY",
+        "default_model": "claude-sonnet-4-20250514",
+        "models": [
+            "claude-opus-4-20250514",
+            "claude-sonnet-4-20250514",
+            "claude-haiku-4-5-20251001",
+        ],
+    },
+    "openai": {
+        "label": "OpenAI",
+        "env_key": "OPENAI_API_KEY",
+        "default_model": "gpt-4o",
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-mini"],
+    },
+    "gemini": {
+        "label": "Google Gemini",
+        "env_key": "GEMINI_API_KEY",
+        "default_model": "gemini-1.5-flash",
+        "models": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"],
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "env_key": "OPENROUTER_API_KEY",
+        "default_model": "meta-llama/llama-3.3-70b-instruct",
+        "models": [
+            "meta-llama/llama-3.3-70b-instruct",
+            "mistralai/mistral-large",
+            "deepseek/deepseek-chat",
+            "google/gemma-3-27b-it",
+            "qwen/qwen-2.5-72b-instruct",
+        ],
+    },
+    "ollama": {
+        "label": "Ollama (local)",
+        "env_key": None,
+        "default_model": "llama3.2",
+        "models": ["llama3.2", "llama3.1", "mistral", "gemma3", "qwen2.5"],
+    },
+    "custom": {
+        "label": "Custom / Compatible",
+        "env_key": "CUSTOM_AI_API_KEY",
+        "default_model": "",
+        "models": [],
+    },
 }
 
 
-def _get_api_key() -> str | None:
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    return key if key else None
+# ---------------------------------------------------------------------------
+# Status object — readable from app.py
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AIStatus:
+    provider: str = "none"
+    model: str = ""
+    connected: bool = False
+    error: str = ""
+    last_call_at: float = 0.0
+    call_count: int = 0
+    fallback_count: int = 0
+
+    def as_dict(self) -> dict:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "connected": self.connected,
+            "error": self.error,
+            "last_call_at": self.last_call_at,
+            "call_count": self.call_count,
+            "fallback_count": self.fallback_count,
+        }
+
+
+AI_STATUS = AIStatus()
 
 
 # ---------------------------------------------------------------------------
-# Claude API call — direct HTTP, no SDK dependency
+# .env loader (loads ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 # ---------------------------------------------------------------------------
 
-def _call_claude(prompt: str, max_tokens: int = 1024) -> str:
-    """Call Claude API and return the text response. Raises on failure."""
-    import urllib.request
-    import urllib.error
+def _load_env() -> None:
+    for path in [".env", os.path.expanduser("~/.env")]:
+        if os.path.exists(path):
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, _, value = line.partition("=")
+                        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            break
 
-    api_key = _get_api_key()
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
 
-    body = json.dumps({
-        "model": AI_STATUS["model"],
-        "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
-        "system": (
-            "You are an expert intraday trading assistant. You receive market signals "
-            "and portfolio data, and return ONLY a JSON array of trading decisions. "
-            "You reason carefully about risk, diversification, and position sizing. "
-            "You never recommend margin, options, or shorting. "
-            "You always spread risk — never put more than 30% of available cash into one position. "
-            "You are conservative: when unsure, you watch rather than trade."
-        ),
-    }).encode("utf-8")
+_load_env()
 
+
+# ---------------------------------------------------------------------------
+# Per-provider HTTP call implementations
+# ---------------------------------------------------------------------------
+
+def _call_anthropic(api_key: str, model: str, system: str, user: str) -> str:
+    payload = json.dumps({
+        "model": model,
+        "max_tokens": 1000,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }).encode()
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
-        data=body,
+        data=payload,
         headers={
+            "Content-Type": "application/json",
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
         },
         method="POST",
     )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    return data["content"][0]["text"]
 
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        result = json.loads(resp.read().decode("utf-8"))
-        return result["content"][0]["text"]
+
+def _call_openai_compat(base_url: str, api_key: str, model: str, system: str, user: str, extra_headers: dict | None = None) -> str:
+    """Handles OpenAI, OpenRouter, Ollama, and custom OpenAI-compatible endpoints."""
+    payload = json.dumps({
+        "model": model,
+        "max_tokens": 1000,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }).encode()
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if extra_headers:
+        headers.update(extra_headers)
+    req = urllib.request.Request(
+        f"{base_url.rstrip('/')}/v1/chat/completions",
+        data=payload,
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    return data["choices"][0]["message"]["content"]
+
+
+def _call_gemini(api_key: str, model: str, system: str, user: str) -> str:
+    combined = f"{system}\n\n{user}"
+    payload = json.dumps({
+        "contents": [{"parts": [{"text": combined}]}],
+        "generationConfig": {"maxOutputTokens": 1000},
+    }).encode()
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
 # ---------------------------------------------------------------------------
-# Build the prompt
+# Unified call dispatcher
 # ---------------------------------------------------------------------------
 
-def _build_prompt(
-    signals: list[Signal],
-    portfolio: Portfolio,
-    settings: Settings,
-) -> str:
-    # Summarise portfolio
-    positions_summary = []
-    for sym, pos in portfolio.positions.items():
-        if pos.quantity > 0:
-            last = portfolio.last_prices.get(sym, pos.avg_cost)
-            pnl  = pos.quantity * (last - pos.avg_cost)
-            positions_summary.append({
-                "symbol": sym,
-                "quantity": round(pos.quantity, 6),
-                "avg_cost": pos.avg_cost,
-                "last_price": last,
-                "unrealized_pnl": round(pnl, 2),
-                "value": round(pos.quantity * last, 2),
-            })
+def _call_ai(provider: str, model: str, system: str, user: str) -> str:
+    if provider == "anthropic":
+        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set")
+        return _call_anthropic(key, model, system, user)
 
-    total_pnl = portfolio.realized_pnl + portfolio.unrealized_pnl()
+    if provider == "openai":
+        key = os.environ.get("OPENAI_API_KEY", "")
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY not set")
+        return _call_openai_compat("https://api.openai.com", key, model, system, user)
 
-    # Top signals with their diagnostics
-    signal_data = []
-    for s in signals[:15]:  # send top 15 signals max to keep prompt tight
-        entry: dict[str, Any] = {
-            "symbol": s.symbol,
-            "price": s.price,
-            "action": s.action,
-            "score": round(s.score, 3),
-            "reason": s.reason,
-        }
-        if s.diagnostics:
-            d = s.diagnostics
-            entry["volatility_pct"] = d.volatility
-            entry["trend_strength_pct"] = d.trend_strength
-            entry["volume_spike"] = d.volume_spike
-            entry["spread_pct"] = round(d.spread_pct * 100, 3)
-        signal_data.append(entry)
+    if provider == "openrouter":
+        key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not key:
+            raise RuntimeError("OPENROUTER_API_KEY not set")
+        return _call_openai_compat(
+            "https://openrouter.ai/api",
+            key,
+            model,
+            system,
+            user,
+            extra_headers={"HTTP-Referer": "http://localhost:8765", "X-Title": "Trading Tool"},
+        )
 
-    context = {
-        "portfolio": {
-            "cash_available": round(portfolio.cash, 2),
-            "realized_pnl": round(portfolio.realized_pnl, 2),
-            "unrealized_pnl": round(portfolio.unrealized_pnl(), 2),
-            "total_pnl": round(total_pnl, 2),
-            "open_positions": positions_summary,
-        },
-        "settings": {
-            "budget": settings.budget,
-            "max_trade_value": settings.max_trade_value,
-            "max_loss": settings.max_loss,
-            "max_loss_remaining": round(settings.max_loss + total_pnl, 2),
-        },
-        "signals": signal_data,
-    }
+    if provider == "ollama":
+        base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+        return _call_openai_compat(base, "", model, system, user)
 
-    return f"""Here is the current market state for an intraday paper trading session:
+    if provider == "gemini":
+        key = os.environ.get("GEMINI_API_KEY", "")
+        if not key:
+            raise RuntimeError("GEMINI_API_KEY not set")
+        return _call_gemini(key, model, system, user)
 
-{json.dumps(context, indent=2)}
+    if provider == "custom":
+        base = os.environ.get("CUSTOM_AI_BASE_URL", "")
+        if not base:
+            raise RuntimeError("CUSTOM_AI_BASE_URL not set")
+        key = os.environ.get("CUSTOM_AI_API_KEY", "")
+        model = model or os.environ.get("CUSTOM_AI_MODEL", "")
+        return _call_openai_compat(base, key, model, system, user)
 
-Analyse the signals and portfolio above. Return ONLY a JSON array of decisions.
-Each decision must have exactly these fields:
-  - "symbol": string
-  - "action": "buy" | "sell" | "watch"
-  - "quantity_pct": number (0-100) — percentage of available cash to spend on a buy,
-                    or percentage of held position to sell (use 100 for full exit)
-  - "confidence": number (0-1)
-  - "reason": string (1-2 sentences explaining the decision)
+    raise RuntimeError(f"Unknown provider: {provider}")
+
+
+# ---------------------------------------------------------------------------
+# Config resolution
+# ---------------------------------------------------------------------------
+
+def _resolve_config() -> tuple[str, str]:
+    """Returns (provider, model) from environment or defaults."""
+    provider = os.environ.get("AI_PROVIDER", "").lower()
+
+    # Auto-detect if not set: pick first provider with a key present
+    if not provider:
+        for name, meta in PROVIDERS.items():
+            if name == "ollama":
+                continue  # skip auto-detect for local
+            env_key = meta.get("env_key")
+            if env_key and os.environ.get(env_key):
+                provider = name
+                break
+
+    if not provider:
+        provider = "none"
+
+    meta = PROVIDERS.get(provider, {})
+    model = os.environ.get("AI_MODEL", "") or meta.get("default_model", "")
+    return provider, model
+
+
+# ---------------------------------------------------------------------------
+# Prompt builder
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = """You are an autonomous trading AI assistant. Your job is to evaluate market signals
+and propose buy/sell decisions within strict risk parameters.
 
 Rules you must follow:
-1. Never recommend more than 25% of available cash on a single buy.
-2. If cash < $5, do not recommend any buys.
-3. Only recommend selling a symbol if it is in open_positions.
-4. If total_pnl <= -max_loss, recommend selling all positions immediately, no new buys.
-5. Skip symbols with volatility > 80% — too risky.
-6. Diversify — prefer spreading buys across 3-5 symbols over concentrating in one.
-7. If a signal score < 0.6, set action to "watch" unless you have strong conviction.
-8. Return an empty array [] if no action is warranted.
+- Never put more than 25% of available cash into one position
+- Spread buys across 3-5 symbols if possible
+- Skip signals with score < 0.6
+- Skip symbols with volatility > 80%
+- Emergency sell all held positions if total P&L hits the max loss limit
+- Only sell what is held — never short
+- Return ONLY a JSON array, no markdown, no explanation
 
-Return ONLY the JSON array, no explanation, no markdown fences."""
+Each item in the array must have:
+  symbol     (string, e.g. "AAPL.US")
+  action     ("buy", "sell", or "hold")
+  quantity_pct (float 0.0-1.0, fraction of max_trade_value to spend)
+  confidence (float 0.0-1.0)
+  reason     (string, one sentence)
 
-
-# ---------------------------------------------------------------------------
-# Parse Claude's response
-# ---------------------------------------------------------------------------
-
-def _parse_decisions(raw: str) -> list[dict]:
-    """Extract JSON array from Claude's response robustly."""
-    raw = raw.strip()
-    # Strip markdown fences if present
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    try:
-        decisions = json.loads(raw)
-        if isinstance(decisions, list):
-            return decisions
-    except json.JSONDecodeError:
-        # Try to find JSON array within the text
-        start = raw.find("[")
-        end   = raw.rfind("]") + 1
-        if start != -1 and end > start:
-            try:
-                return json.loads(raw[start:end])
-            except Exception:
-                pass
-    return []
+Return [] if no trades are warranted."""
 
 
-# ---------------------------------------------------------------------------
-# Convert AI decisions → OrderProposals
-# ---------------------------------------------------------------------------
+def _build_user_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> str:
+    lines = [
+        f"Available cash: ${portfolio.cash:.2f}",
+        f"Budget: ${settings.budget:.2f}",
+        f"Max trade value: ${settings.max_trade_value:.2f}",
+        f"Max loss remaining: ${settings.max_loss + portfolio.realized_pnl + portfolio.unrealized_pnl():.2f}",
+        f"Realized P&L: ${portfolio.realized_pnl:.2f}",
+        f"Unrealized P&L: ${portfolio.unrealized_pnl():.2f}",
+        "",
+        "Open positions:",
+    ]
+    if portfolio.positions:
+        for sym, pos in portfolio.positions.items():
+            last = portfolio.last_prices.get(sym, pos.avg_cost)
+            pnl = pos.quantity * (last - pos.avg_cost)
+            lines.append(f"  {sym}: {pos.quantity} shares, avg ${pos.avg_cost:.2f}, now ${last:.2f}, P&L ${pnl:.2f}")
+    else:
+        lines.append("  (none)")
 
-def _decisions_to_proposals(
-    decisions: list[dict],
-    signals: list[Signal],
-    portfolio: Portfolio,
-    settings: Settings,
-) -> list[OrderProposal]:
-    price_map  = {s.symbol: s.price for s in signals}
-    price_map.update(portfolio.last_prices)
+    lines += ["", "Top signals (sorted by score desc):"]
+    for sig in signals[:15]:
+        lines.append(
+            f"  {sig.symbol}: action={sig.action} score={sig.score:.2f} price=${sig.price:.2f} reason={sig.reason}"
+        )
 
-    proposals: list[OrderProposal] = []
-
-    for dec in decisions:
-        try:
-            symbol     = dec["symbol"]
-            action     = dec["action"]
-            qty_pct    = float(dec.get("quantity_pct", 0))
-            confidence = float(dec.get("confidence", 0.5))
-            reason     = str(dec.get("reason", "AI decision."))
-
-            if action == "watch":
-                continue
-
-            price = price_map.get(symbol)
-            if not price or price <= 0:
-                continue
-
-            if action == "buy":
-                # qty_pct = % of available cash to spend
-                spend    = portfolio.cash * (qty_pct / 100.0)
-                spend    = min(spend, settings.max_trade_value, portfolio.cash)
-                quantity = affordable_quantity(price, spend, spend)
-                if quantity <= 0:
-                    continue
-                proposals.append(OrderProposal(
-                    symbol=symbol, side=Side.BUY,
-                    quantity=quantity, price=price,
-                    confidence=confidence, reason=f"[AI] {reason}",
-                ))
-
-            elif action == "sell":
-                pos = portfolio.positions.get(symbol)
-                if not pos or pos.quantity <= 0:
-                    continue
-                # qty_pct = % of held position to sell
-                quantity = round(pos.quantity * (qty_pct / 100.0), 6)
-                quantity = min(quantity, pos.quantity)
-                if quantity <= 0:
-                    continue
-                proposals.append(OrderProposal(
-                    symbol=symbol, side=Side.SELL,
-                    quantity=quantity, price=price,
-                    confidence=confidence, reason=f"[AI] {reason}",
-                ))
-        except Exception:
-            continue
-
-    return proposals[:6]  # max 6 proposals per tick
+    lines += ["", "Respond with a JSON array only."]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# AIStrategy — drop-in replacement for MomentumStrategy
+# Main AIStrategy class
 # ---------------------------------------------------------------------------
 
 class AIStrategy:
-    """
-    Uses Claude to make trading decisions based on momentum signals.
-    Falls back to MomentumStrategy if API key is not set or call fails.
-    """
+    THROTTLE_SECONDS = 30
 
     def __init__(self) -> None:
-        self._momentum = MomentumStrategy()
-        # Throttle AI calls — max 1 per 30s to avoid burning API quota
-        self._last_ai_call: float = 0.0
-        self._ai_call_interval: float = 30.0
+        self._fallback = MomentumStrategy()
+        self._last_call = 0.0
+        self._provider, self._model = _resolve_config()
+        AI_STATUS.provider = self._provider
+        AI_STATUS.model = self._model
+        AI_STATUS.connected = self._provider not in ("none", "")
 
-    def scan(
-        self,
-        settings: Settings,
-        quotes: list[Quote],
-        portfolio: Portfolio,
-    ) -> tuple[list[Signal], list[OrderProposal]]:
-        # Always compute momentum signals — fast, no API cost
-        signals, fallback_proposals = self._momentum.scan(settings, quotes, portfolio)
+    def configure(self, provider: str, model: str = "") -> None:
+        """Hot-swap provider and model at runtime (called from /api/ai/config)."""
+        self._provider = provider
+        meta = PROVIDERS.get(provider, {})
+        self._model = model or meta.get("default_model", "")
+        AI_STATUS.provider = self._provider
+        AI_STATUS.model = self._model
+        AI_STATUS.connected = self._provider not in ("none", "")
+        AI_STATUS.error = ""
 
-        api_key = _get_api_key()
-        AI_STATUS["enabled"] = bool(api_key)
+    def scan(self, settings: Settings, quotes: list, portfolio: Portfolio) -> tuple[list, list[OrderProposal]]:
+        # Always run momentum for signals
+        signals, fallback_proposals = self._fallback.scan(settings, quotes, portfolio)
 
-        if not api_key:
-            AI_STATUS["last_error"] = "ANTHROPIC_API_KEY not set — using rule-based fallback"
+        if self._provider in ("none", ""):
             return signals, fallback_proposals
 
-        # Throttle: only call Claude every 30s
-        now = time.monotonic()
-        if now - self._last_ai_call < self._ai_call_interval:
-            # Return cached signals but no new proposals until next AI call window
-            return signals, []
-
-        # Circuit-breaker: no new buys if max loss hit
-        total_pnl = portfolio.realized_pnl + portfolio.unrealized_pnl()
-        if total_pnl <= -settings.max_loss:
-            return signals, fallback_proposals  # fallback handles emergency sells
+        now = time.time()
+        if now - self._last_call < self.THROTTLE_SECONDS:
+            return signals, fallback_proposals
 
         try:
-            prompt    = _build_prompt(signals, portfolio, settings)
-            raw       = _call_claude(prompt)
-            decisions = _parse_decisions(raw)
-
-            self._last_ai_call = now
-            AI_STATUS["last_call_at"]        = time.strftime("%H:%M:%S")
-            AI_STATUS["last_error"]          = None
-            AI_STATUS["calls_this_session"] += 1
-
-            proposals = _decisions_to_proposals(decisions, signals, portfolio, settings)
+            user_prompt = _build_user_prompt(signals, portfolio, settings)
+            raw = _call_ai(self._provider, self._model, SYSTEM_PROMPT, user_prompt)
+            proposals = self._parse_proposals(raw, quotes, portfolio, settings)
+            self._last_call = now
+            AI_STATUS.connected = True
+            AI_STATUS.error = ""
+            AI_STATUS.last_call_at = now
+            AI_STATUS.call_count += 1
             return signals, proposals
-
         except Exception as exc:
-            AI_STATUS["last_error"] = str(exc)
-            # Fall back to rule-based proposals
+            AI_STATUS.error = str(exc)
+            AI_STATUS.fallback_count += 1
             return signals, fallback_proposals
+
+    def _parse_proposals(self, raw: str, quotes: list, portfolio: Portfolio, settings: Settings) -> list[OrderProposal]:
+        # Strip markdown fences if present
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        text = text.strip().strip("`")
+
+        decisions = json.loads(text)
+        quote_map = {q.symbol: q for q in quotes}
+        proposals: list[OrderProposal] = []
+
+        for item in decisions:
+            symbol = item.get("symbol", "")
+            action = item.get("action", "hold")
+            confidence = float(item.get("confidence", 0.5))
+            reason = item.get("reason", "AI decision.")
+            quantity_pct = float(item.get("quantity_pct", 0.5))
+
+            if action == "hold" or symbol not in quote_map:
+                continue
+
+            quote = quote_map[symbol]
+            position = portfolio.positions.get(symbol)
+            held = position.quantity if position else 0
+
+            if action == "sell" and held > 0:
+                proposals.append(OrderProposal(
+                    symbol=symbol, side=Side.SELL, quantity=held,
+                    price=quote.price, confidence=confidence, reason=reason,
+                ))
+
+            elif action == "buy" and held == 0:
+                budget = min(settings.max_trade_value * quantity_pct, portfolio.cash)
+                quantity = max(0, int(budget // quote.price))
+                if quantity > 0:
+                    proposals.append(OrderProposal(
+                        symbol=symbol, side=Side.BUY, quantity=quantity,
+                        price=quote.price, confidence=confidence, reason=reason,
+                    ))
+
+        return proposals[:5]
