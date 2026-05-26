@@ -54,14 +54,18 @@ function render(data) {
   // AI Brain status
   const aiEl = el("aiStatus");
   if (aiEl) {
-    const aiOn = ai_status.enabled;
+    const aiOn = ai_status.connected;
+    const providerLabel = ai_status.provider && ai_status.provider !== "none" ? ai_status.provider : null;
     aiEl.textContent = aiOn
-      ? `Active · ${ai_status.calls_this_session || 0} calls`
-      : "Rule-based fallback";
+      ? `${providerLabel || "AI"} · ${ai_status.call_count || 0} calls`
+      : providerLabel ? `${providerLabel} (no key)` : "Rule-based fallback";
     aiEl.className = "status-val " + (aiOn ? "ok" : "");
-    aiEl.title = ai_status.last_error || (aiOn
-      ? `Last call: ${ai_status.last_call_at || "—"}`
-      : "Set ANTHROPIC_API_KEY in .env to enable");
+    const lastCall = ai_status.last_call_at
+      ? new Date(ai_status.last_call_at * 1000).toLocaleTimeString()
+      : "—";
+    aiEl.title = ai_status.error || (aiOn
+      ? `Model: ${ai_status.model || "default"} · Last call: ${lastCall} · Fallbacks: ${ai_status.fallback_count || 0}`
+      : "Set an AI API key in .env to enable");
   }
 
   selected.trading_mode = settings.trading_mode;

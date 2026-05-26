@@ -2,7 +2,9 @@
   "settings": {
     "symbol": "AAPL.US",
     "markets": [
-      "US"
+      "US",
+      "HK",
+      "SG"
     ],
     "universe": [],
     "max_scan_symbols": 0,
@@ -21,7 +23,7 @@
   },
   "paper": {
     "portfolio": {
-      "cash": 100.0,
+      "cash": 0.0,
       "realized_pnl": 0.0,
       "positions": {},
       "last_prices": {}

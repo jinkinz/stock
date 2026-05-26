@@ -270,7 +270,7 @@ class TradingEngine:
             "session_start_at": STATE.session_start_at,
             "lb_connected": LB_STATUS["connected"],
             "lb_error": LB_STATUS["error"],
-            "ai_status": AI_STATUS,
+            "ai_status": AI_STATUS.as_dict(),
         }
 
     def tick(self) -> dict:
