@@ -68,6 +68,30 @@ function render(data) {
       : "Set an AI API key in .env to enable");
   }
 
+  // Sync AI provider selector to current state
+  const aiSel = el("aiProvider");
+  if (aiSel && data.ai_status?.provider) {
+    aiSel.value = data.ai_status.provider;
+  }
+  const aiModelEl = el("aiModel");
+  if (aiModelEl && data.ai_status?.model && document.activeElement !== aiModelEl) {
+    aiModelEl.placeholder = data.ai_status.model || "blank = default";
+  }
+  const aiCfgStatus = el("aiConfigStatus");
+  if (aiCfgStatus && data.ai_status) {
+    const s = data.ai_status;
+    if (s.error) {
+      aiCfgStatus.style.color = "var(--red)";
+      aiCfgStatus.textContent = "⚠ " + s.error;
+    } else if (s.connected) {
+      aiCfgStatus.style.color = "var(--green)";
+      aiCfgStatus.textContent = `✓ ${s.provider} · ${s.model || "default"} · ${s.call_count} calls`;
+    } else {
+      aiCfgStatus.style.color = "var(--muted)";
+      aiCfgStatus.textContent = s.provider !== "none" ? `Add ${s.provider.toUpperCase()}_API_KEY to .env` : "Momentum strategy only";
+    }
+  }
+
   selected.trading_mode = settings.trading_mode;
   selected.approval_mode = settings.approval_mode;
 
@@ -457,6 +481,52 @@ el("proposals").addEventListener("click", async e => {
 });
 
 el("sessionsTab").addEventListener("click", loadSessions);
+
+
+// ─────────────────────────────────────────────
+// AI Brain config
+// ─────────────────────────────────────────────
+const AI_DEFAULTS = {
+  anthropic: "claude-sonnet-4-20250514",
+  openai: "gpt-4o",
+  gemini: "gemini-1.5-flash",
+  openrouter: "meta-llama/llama-3.3-70b-instruct",
+  ollama: "llama3.2",
+  custom: "",
+  none: "",
+};
+
+el("aiProvider").addEventListener("change", () => {
+  const def = AI_DEFAULTS[el("aiProvider").value] || "";
+  el("aiModel").placeholder = def || "enter model name";
+  el("aiModel").value = "";
+});
+
+el("saveAiBtn").addEventListener("click", async () => {
+  const provider = el("aiProvider").value;
+  const model = el("aiModel").value.trim();
+  const statusEl = el("aiConfigStatus");
+  statusEl.style.color = "var(--muted)";
+  statusEl.textContent = "Applying…";
+  try {
+    const data = await api("/api/ai/config", { method: "POST", body: JSON.stringify({ provider, model }) });
+    // render will update the status label via SSE; also update immediately
+    const s = data.ai;
+    if (s.error) {
+      statusEl.style.color = "var(--red)";
+      statusEl.textContent = "⚠ " + s.error;
+    } else if (s.connected) {
+      statusEl.style.color = "var(--green)";
+      statusEl.textContent = `✓ ${s.provider} · ${s.model || "default"}`;
+    } else {
+      statusEl.style.color = "var(--muted)";
+      statusEl.textContent = s.provider !== "none" ? `Add ${s.provider.toUpperCase()}_API_KEY to .env` : "Momentum only";
+    }
+  } catch (err) {
+    statusEl.style.color = "var(--red)";
+    statusEl.textContent = "Error: " + err.message;
+  }
+});
 
 // ─────────────────────────────────────────────
 // SSE — live

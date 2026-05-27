@@ -612,6 +612,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/audit": lambda: self._serve_jsonl_tail(AUDIT_LOG, 100),
             "/api/sessions": lambda: self._serve_jsonl_tail(SESSIONS_LOG, 50),
             "/api/backtest/last": lambda: self._serve_jsonl_tail(BACKTEST_LOG, 1),
+            "/api/ai/status": lambda: self._json({"ai": AI_STATUS.as_dict()}),
         }
         if path in routes:
             routes[path]()
@@ -654,6 +655,13 @@ class Handler(BaseHTTPRequestHandler):
             ticks = max(10, min(500, int(p.get("ticks", 60))))
             cash = float(p.get("starting_cash", STATE.settings.budget))
             self._json(run_backtest(symbols, ticks=ticks, starting_cash=cash))
+        elif path == "/api/ai/config":
+            payload = self._read_json()
+            provider = payload.get("provider", "")
+            model = payload.get("model", "").strip()
+            if hasattr(STATE.strategy, "configure"):
+                STATE.strategy.configure(provider, model)
+            self._json({"ai": AI_STATUS.as_dict()})
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 

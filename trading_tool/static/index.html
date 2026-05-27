@@ -85,6 +85,29 @@
           <button class="btn-primary wide" type="submit">Save Settings</button>
         </form>
 
+
+        <div class="sidebar-section-label">AI Brain</div>
+        <div class="settings-form" style="padding-bottom:4px">
+          <div class="field">
+            <label for="aiProvider">Provider</label>
+            <select id="aiProvider">
+              <option value="anthropic">Anthropic Claude</option>
+              <option value="openai">OpenAI GPT</option>
+              <option value="gemini">Google Gemini</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="ollama">Ollama (local)</option>
+              <option value="custom">Custom endpoint</option>
+              <option value="none">None (momentum only)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="aiModel">Model <span class="hint-inline">blank = default</span></label>
+            <input id="aiModel" type="text" placeholder="e.g. gpt-4o" />
+          </div>
+          <button id="saveAiBtn" class="btn-secondary wide" type="button">Apply AI Config</button>
+          <div id="aiConfigStatus" style="font-size:11px;color:var(--muted);min-height:16px"></div>
+        </div>
+
         <div class="sidebar-section-label">Danger Zone</div>
         <div class="danger-zone">
           <button id="resetPaperButton" class="btn-danger wide">Reset Paper Account</button>

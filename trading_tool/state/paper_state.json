@@ -23,7 +23,7 @@
   },
   "paper": {
     "portfolio": {
-      "cash": 0.0,
+      "cash": 100.0,
       "realized_pnl": 0.0,
       "positions": {},
       "last_prices": {}
@@ -31,7 +31,7 @@
     "prices": {}
   },
   "proposals": [],
-  "last_tick_at": null,
+  "last_tick_at": "2026-05-27T15:49:08.557348+00:00",
   "tick_paused": false,
   "session_start_at": null,
   "session_start_equity": 0.0
