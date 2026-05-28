@@ -50,8 +50,8 @@ PROVIDERS: dict[str, dict] = {
     "gemini": {
         "label": "Google Gemini",
         "env_key": "GEMINI_API_KEY",
-        "default_model": "gemini-1.5-flash",
-        "models": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"],
+        "default_model": "gemini-2.5-flash",
+        "models": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
     },
     "openrouter": {
         "label": "OpenRouter",
@@ -114,15 +114,25 @@ AI_STATUS = AIStatus()
 # ---------------------------------------------------------------------------
 
 def _load_env() -> None:
-    for path in [".env", os.path.expanduser("~/.env")]:
-        if os.path.exists(path):
-            with open(path) as f:
+    # Search in: script's own directory, cwd, and home — in that order
+    _here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(_here, ".env"),          # trading_tool/.env  ← most likely
+        os.path.join(os.getcwd(), ".env"),     # wherever you ran python from
+        os.path.expanduser("~/.env"),          # home directory fallback
+    ]
+    for env_path in candidates:
+        if os.path.exists(env_path):
+            with open(env_path) as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         key, _, value = line.partition("=")
-                        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-            break
+                        key = key.strip()
+                        value = value.strip().strip('"').strip("'")
+                        if key and value:           # skip blank values
+                            os.environ.setdefault(key, value)
+            break  # stop after first found
 
 
 _load_env()
@@ -135,50 +145,23 @@ _load_env()
 def _call_anthropic(api_key: str, model: str, system: str, user: str) -> str:
     payload = json.dumps({
         "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
         "max_tokens": 1000,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
     }).encode()
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/chat/completions",
+        "https://api.anthropic.com/v1/messages",
         data=payload,
         headers={
             "Content-Type": "application/json",
             "x-api-key": api_key,
-            "anthropic-version": "2024-12-19",
+            "anthropic-version": "2023-06-01",
         },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-
-    if isinstance(data, dict):
-        if "choices" in data and data["choices"]:
-            choice = data["choices"][0]
-            message = choice.get("message", {})
-            if isinstance(message, dict):
-                content = message.get("content")
-                if isinstance(content, list):
-                    text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
-                    if text_parts:
-                        return "".join(text_parts).strip()
-                if isinstance(content, str):
-                    return content.strip()
-        if "completion" in data and isinstance(data["completion"], str):
-            return data["completion"].strip()
-        if "output" in data:
-            output = data["output"]
-            if isinstance(output, list) and output:
-                first = output[0]
-                if isinstance(first, dict) and "content" in first:
-                    content = first["content"]
-                    if isinstance(content, list):
-                        text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
-                        if text_parts:
-                            return "".join(text_parts).strip()
-    raise RuntimeError("Unable to decode Anthropic response")
+    return data["content"][0]["text"]
 
 
 def _call_openai_compat(base_url: str, api_key: str, model: str, system: str, user: str, extra_headers: dict | None = None) -> str:

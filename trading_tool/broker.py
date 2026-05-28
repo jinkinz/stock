@@ -10,9 +10,11 @@ from .models import OrderProposal, Portfolio, Position, Quote, Side
 
 
 def _load_dotenv() -> None:
-    """Load LONGBRIDGE_* vars from a .env file if present (current dir or home dir).
-    Does NOT override vars that are already set in the environment."""
-    for candidate in (Path.cwd() / ".env", Path.home() / ".env"):
+    """Load ALL recognised vars from a .env file if present.
+    Searches: script dir first, then cwd, then home. Does NOT override existing env vars."""
+    _here = Path(__file__).resolve().parent
+    candidates = [_here / ".env", Path.cwd() / ".env", Path.home() / ".env"]
+    for candidate in candidates:
         if not candidate.exists():
             continue
         try:
@@ -23,7 +25,7 @@ def _load_dotenv() -> None:
                 key, _, val = line.partition("=")
                 key = key.strip()
                 val = val.strip().strip('"').strip("'")
-                if (key.startswith("LONGBRIDGE_") or key.startswith("ANTHROPIC_")) and key not in os.environ:
+                if key and val and key not in os.environ:
                     os.environ[key] = val
         except Exception:
             pass
