@@ -135,23 +135,50 @@ _load_env()
 def _call_anthropic(api_key: str, model: str, system: str, user: str) -> str:
     payload = json.dumps({
         "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
         "max_tokens": 1000,
-        "system": system,
-        "messages": [{"role": "user", "content": user}],
     }).encode()
     req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
+        "https://api.anthropic.com/v1/chat/completions",
         data=payload,
         headers={
             "Content-Type": "application/json",
             "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
+            "anthropic-version": "2024-12-19",
         },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    return data["content"][0]["text"]
+
+    if isinstance(data, dict):
+        if "choices" in data and data["choices"]:
+            choice = data["choices"][0]
+            message = choice.get("message", {})
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, list):
+                    text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+                    if text_parts:
+                        return "".join(text_parts).strip()
+                if isinstance(content, str):
+                    return content.strip()
+        if "completion" in data and isinstance(data["completion"], str):
+            return data["completion"].strip()
+        if "output" in data:
+            output = data["output"]
+            if isinstance(output, list) and output:
+                first = output[0]
+                if isinstance(first, dict) and "content" in first:
+                    content = first["content"]
+                    if isinstance(content, list):
+                        text_parts = [part.get("text", "") for part in content if isinstance(part, dict)]
+                        if text_parts:
+                            return "".join(text_parts).strip()
+    raise RuntimeError("Unable to decode Anthropic response")
 
 
 def _call_openai_compat(base_url: str, api_key: str, model: str, system: str, user: str, extra_headers: dict | None = None) -> str:
