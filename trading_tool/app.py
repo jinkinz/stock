@@ -317,7 +317,8 @@ class TradingEngine:
             was_enabled = settings.strategy_enabled
             for key in ("symbol", "markets", "universe", "budget", "duration_minutes", "max_scan_symbols",
                         "max_loss", "max_trade_value", "auto_tick_enabled", "tick_interval_seconds",
-                        "allow_live_trading", "stop_at_end", "strategy_enabled"):
+                        "allow_live_trading", "stop_at_end", "strategy_enabled",
+                        "target_profit", "ai_strategy_name"):
                 if key in payload:
                     setattr(settings, key, payload[key])
             if "trading_mode" in payload:
@@ -659,8 +660,13 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._read_json()
             provider = payload.get("provider", "")
             model = payload.get("model", "").strip()
+            strategy = payload.get("strategy", "").strip()
             if hasattr(STATE.strategy, "configure"):
-                STATE.strategy.configure(provider, model)
+                STATE.strategy.configure(provider, model, strategy)
+            # Also sync strategy to settings so prompt builder sees it
+            if strategy:
+                STATE.settings.ai_strategy_name = strategy
+                STATE.save()
             self._json({"ai": AI_STATUS.as_dict()})
         else:
             self.send_error(HTTPStatus.NOT_FOUND)

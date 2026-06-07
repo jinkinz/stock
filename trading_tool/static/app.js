@@ -68,15 +68,23 @@ function render(data) {
       : "Set an AI API key in .env to enable");
   }
 
-  // Sync AI provider selector to current state
+  // Sync AI controls to current state
   const aiSel = el("aiProvider");
-  if (aiSel && data.ai_status?.provider) {
-    aiSel.value = data.ai_status.provider;
-  }
+  if (aiSel && data.ai_status?.provider) aiSel.value = data.ai_status.provider;
+
   const aiModelEl = el("aiModel");
-  if (aiModelEl && data.ai_status?.model && document.activeElement !== aiModelEl) {
+  if (aiModelEl && data.ai_status?.model && document.activeElement !== aiModelEl)
     aiModelEl.placeholder = data.ai_status.model || "blank = default";
-  }
+
+  const aiStrEl = el("aiStrategy");
+  if (aiStrEl && data.ai_status?.strategy) aiStrEl.value = data.ai_status.strategy;
+
+  const tpEl = el("targetProfit");
+  if (tpEl && document.activeElement !== tpEl)
+    tpEl.value = settings.target_profit || 0;
+
+  _updateStrategyDesc();
+
   const aiCfgStatus = el("aiConfigStatus");
   if (aiCfgStatus && data.ai_status) {
     const s = data.ai_status;
@@ -85,10 +93,10 @@ function render(data) {
       aiCfgStatus.textContent = "⚠ " + s.error;
     } else if (s.connected) {
       aiCfgStatus.style.color = "var(--green)";
-      aiCfgStatus.textContent = `✓ ${s.provider} · ${s.model || "default"} · ${s.call_count} calls`;
+      aiCfgStatus.textContent = `✓ ${s.provider} · ${s.model || "default"} · ${s.call_count} calls · ${s.fallback_count} fallbacks`;
     } else {
       aiCfgStatus.style.color = "var(--muted)";
-      aiCfgStatus.textContent = s.provider !== "none" ? `Add ${s.provider.toUpperCase()}_API_KEY to .env` : "Momentum strategy only";
+      aiCfgStatus.textContent = s.provider !== "none" ? `Add ${s.provider.toUpperCase()}_API_KEY to .env` : "Momentum rules only (no AI provider)";
     }
   }
 
@@ -500,12 +508,28 @@ el("sessionsTab").addEventListener("click", loadSessions);
 const AI_DEFAULTS = {
   anthropic: "claude-sonnet-4-20250514",
   openai: "gpt-4o",
-  gemini: "gemini-1.5-flash",
+  gemini: "gemini-2.5-flash",
   openrouter: "meta-llama/llama-3.3-70b-instruct",
   ollama: "llama3.2",
   custom: "",
   none: "",
 };
+
+const STRATEGY_DESCS = {
+  fifo:         "Buy momentum leaders, sell as soon as each position covers its share of the profit target. Lock gains fast, reinvest cash.",
+  scalp:        "Many small wins (+0.3% per trade). High turnover. Cut losses at -0.2%. Compounds into target over session.",
+  swing:        "Buy strong signals and hold through minor dips. Only sell on clear reversal. Fewer trades, bigger gains.",
+  conservative: "High-confidence signals only (>0.75). Tiny positions. Tight stops. Capital preservation first.",
+  aggressive:   "Max position sizes, trade every signal, let winners run. High risk — watch closely.",
+};
+
+function _updateStrategyDesc() {
+  const desc = el("strategyDesc");
+  const sel = el("aiStrategy");
+  if (desc && sel) desc.textContent = STRATEGY_DESCS[sel.value] || "";
+}
+
+el("aiStrategy")?.addEventListener("change", _updateStrategyDesc);
 
 el("aiProvider").addEventListener("change", () => {
   const def = AI_DEFAULTS[el("aiProvider").value] || "";
@@ -515,29 +539,39 @@ el("aiProvider").addEventListener("change", () => {
 
 el("saveAiBtn").addEventListener("click", async () => {
   const provider = el("aiProvider").value;
-  const model = el("aiModel").value.trim();
+  const model    = el("aiModel").value.trim();
+  const strategy = el("aiStrategy").value;
+  const target   = parseFloat(el("targetProfit").value || "0");
   const statusEl = el("aiConfigStatus");
   statusEl.style.color = "var(--muted)";
   statusEl.textContent = "Applying…";
   try {
-    const data = await api("/api/ai/config", { method: "POST", body: JSON.stringify({ provider, model }) });
-    // render will update the status label via SSE; also update immediately
+    // Save target_profit + ai_strategy_name to settings
+    await api("/api/settings", { method: "POST", body: JSON.stringify({
+      ...state.settings,
+      target_profit: target,
+      ai_strategy_name: strategy,
+    })});
+    // Then hot-swap the AI provider/model/strategy
+    const data = await api("/api/ai/config", { method: "POST",
+      body: JSON.stringify({ provider, model, strategy }) });
     const s = data.ai;
     if (s.error) {
       statusEl.style.color = "var(--red)";
       statusEl.textContent = "⚠ " + s.error;
     } else if (s.connected) {
       statusEl.style.color = "var(--green)";
-      statusEl.textContent = `✓ ${s.provider} · ${s.model || "default"}`;
+      statusEl.textContent = `✓ ${s.provider} · ${s.model || "default"} · strategy: ${s.strategy}`;
     } else {
       statusEl.style.color = "var(--muted)";
-      statusEl.textContent = s.provider !== "none" ? `Add ${s.provider.toUpperCase()}_API_KEY to .env` : "Momentum only";
+      statusEl.textContent = s.provider !== "none" ? `Add ${s.provider.toUpperCase()}_API_KEY to .env` : "Momentum rules only";
     }
   } catch (err) {
     statusEl.style.color = "var(--red)";
     statusEl.textContent = "Error: " + err.message;
   }
 });
+
 
 // ─────────────────────────────────────────────
 // SSE — live

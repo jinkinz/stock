@@ -48,6 +48,8 @@ class Settings:
     stop_at_end: bool = True
     strategy_enabled: bool = False
     started_at: str | None = None
+    target_profit: float = 0.0        # how much $ profit to aim for this session
+    ai_strategy_name: str = "fifo"    # which AI strategy to use
 
     def normalized(self) -> "Settings":
         self.symbol = self.symbol.strip().upper()
@@ -61,6 +63,7 @@ class Settings:
         self.max_loss = max(0.0, float(self.max_loss))
         self.max_trade_value = max(0.0, float(self.max_trade_value))
         self.tick_interval_seconds = max(5, int(self.tick_interval_seconds))
+        self.target_profit = max(0.0, float(self.target_profit))
         return self
 
     def active_universe(self) -> list[str]:

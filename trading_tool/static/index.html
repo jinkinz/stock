@@ -89,7 +89,22 @@
         <div class="sidebar-section-label">AI Brain</div>
         <div class="settings-form" style="padding-bottom:4px">
           <div class="field">
-            <label for="aiProvider">Provider</label>
+            <label for="aiStrategy">Strategy</label>
+            <select id="aiStrategy">
+              <option value="fifo">FIFO — Lock Profit Fast</option>
+              <option value="scalp">Scalp — Many Small Wins</option>
+              <option value="swing">Swing — Ride the Trend</option>
+              <option value="conservative">Conservative — Protect Capital</option>
+              <option value="aggressive">Aggressive — Swing for the Fences</option>
+            </select>
+          </div>
+          <div id="strategyDesc" style="font-size:11px;color:var(--muted);padding:4px 2px;line-height:1.5;min-height:32px"></div>
+          <div class="field">
+            <label for="targetProfit">Profit Target ($) <span class="hint-inline">0 = no target</span></label>
+            <input id="targetProfit" type="number" min="0" step="any" value="0" placeholder="e.g. 100" />
+          </div>
+          <div class="field">
+            <label for="aiProvider">AI Provider</label>
             <select id="aiProvider">
               <option value="anthropic">Anthropic Claude</option>
               <option value="openai">OpenAI GPT</option>
@@ -102,10 +117,10 @@
           </div>
           <div class="field">
             <label for="aiModel">Model <span class="hint-inline">blank = default</span></label>
-            <input id="aiModel" type="text" placeholder="e.g. gpt-4o" />
+            <input id="aiModel" type="text" placeholder="e.g. gemini-2.5-flash" />
           </div>
-          <button id="saveAiBtn" class="btn-secondary wide" type="button">Apply AI Config</button>
-          <div id="aiConfigStatus" style="font-size:11px;color:var(--muted);min-height:16px"></div>
+          <button id="saveAiBtn" class="btn-primary wide" type="button">Apply AI Config</button>
+          <div id="aiConfigStatus" style="font-size:11px;color:var(--muted);min-height:16px;margin-top:2px"></div>
         </div>
 
         <div class="sidebar-section-label">Danger Zone</div>
