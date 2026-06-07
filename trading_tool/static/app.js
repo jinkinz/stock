@@ -106,7 +106,18 @@ function render(data) {
   }
 
   const qsEl = el("quoteSource");
-  if (qsEl && quotes.length) qsEl.textContent = quotes[0].source || "—";
+  if (qsEl && quotes.length) {
+    const src = quotes[0].source || "—";
+    qsEl.textContent = src;
+    // Warn clearly if prices are simulated (not real)
+    if (src === "paper-sim") {
+      qsEl.className = "status-val warn";
+      qsEl.title = "⚠ Prices are SIMULATED — Longbridge is not connected. These are NOT real market prices.";
+    } else {
+      qsEl.className = "status-val ok";
+      qsEl.title = "Real market prices from Longbridge";
+    }
+  }
 
   const usEl = el("universeSource");
   if (usEl) usEl.textContent = universe_source;

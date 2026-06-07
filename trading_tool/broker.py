@@ -102,9 +102,13 @@ class PaperBroker:
                 for q in qs:
                     self._prices[q.symbol] = q.price
                     self._portfolio.last_prices[q.symbol] = q.price
+                LB_STATUS["connected"] = True
+                LB_STATUS["error"] = None
                 return [Quote(symbol=q.symbol, price=q.price, timestamp=q.timestamp, source="longbridge-paper") for q in qs]
-            except Exception:
-                pass
+            except Exception as e:
+                LB_STATUS["connected"] = False
+                LB_STATUS["error"] = f"Quote fetch failed: {e}"
+        # Fall back: use last known real price as seed so sim starts from reality
         return [self._simulated_quote(s) for s in symbols]
 
     def discover_symbols(self, markets: list[str]) -> list[str]:
@@ -173,10 +177,15 @@ class PaperBroker:
     def _simulated_quote(self, symbol: str) -> Quote:
         previous = self._prices.get(symbol)
         if previous is None:
+            # No cached price at all — use a random seed
+            # NOTE: this only happens when Longbridge is not connected AND
+            # we have never fetched a real price for this symbol.
+            # If LB was connected before and then failed, self._prices will
+            # still have the last real price, so we won't hit this branch.
             previous = self._seed_price(symbol)
         drift = random.uniform(-0.008, 0.008)
-        price = max(1.0, previous * (1.0 + drift))
-        self._prices[symbol] = round(price, 2)
+        price = max(0.01, previous * (1.0 + drift))
+        self._prices[symbol] = round(price, 4)
         self._portfolio.last_prices[symbol] = self._prices[symbol]
         return Quote(
             symbol=symbol,
@@ -186,6 +195,9 @@ class PaperBroker:
         )
 
     def _seed_price(self, symbol: str) -> float:
+        """Only used when no real price has ever been fetched for this symbol.
+        These are intentionally realistic ranges — but you will see wrong prices
+        if Longbridge is not connected. Check the LB status indicator in the UI."""
         if symbol.endswith(".HK"):
             return 20.0 + random.random() * 400.0
         if symbol.endswith(".SG"):
