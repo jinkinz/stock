@@ -54,6 +54,11 @@ class MomentumStrategy:
     # ------------------------------------------------------------------
 
     def observe(self, quote: Quote) -> None:
+        if quote.price <= 0:
+            # Skip invalid quotes (e.g. halted/delisted symbols returning 0)
+            # so they never enter the rolling price history and cause
+            # divide-by-zero downstream.
+            return
         prices = self.history.setdefault(quote.symbol, deque(maxlen=30))
         prices.append(quote.price)
         self._current_ticks[quote.symbol] = self._current_ticks.get(quote.symbol, 0) + 1
@@ -91,7 +96,8 @@ class MomentumStrategy:
         if len(prices) >= 8:
             short_avg = sum(prices[-3:]) / 3
             long_avg = sum(prices) / len(prices)
-            trend_strength = round(abs(short_avg / long_avg - 1.0) * 100, 3)
+            if long_avg > 0:
+                trend_strength = round(abs(short_avg / long_avg - 1.0) * 100, 3)
 
         return Diagnostics(
             symbol=quote.symbol,
@@ -191,6 +197,14 @@ class MomentumStrategy:
 
         short_avg = sum(list(prices)[-3:]) / 3
         long_avg = sum(prices) / len(prices)
+        if long_avg <= 0:
+            # Symbol has zero/invalid prices (halted, delisted, no recent trades) —
+            # skip ranking it rather than dividing by zero.
+            return Signal(
+                symbol=quote.symbol, price=quote.price, score=0.0, action="watch",
+                reason="Invalid price data (zero average) — skipping.",
+                diagnostics=diag,
+            )
         momentum = short_avg / long_avg - 1.0
         position = portfolio.positions.get(quote.symbol)
         held_quantity = position.quantity if position else 0.0
