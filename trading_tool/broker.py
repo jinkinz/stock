@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import random
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -59,7 +60,13 @@ class Broker(Protocol):
 
 class PaperBroker:
     """Local paper broker. Uses Longbridge real quotes when credentials are
-    available; falls back to a random-walk simulator when they are not."""
+    available; falls back to a random-walk simulator when they are not.
+
+    Connection to Longbridge is retried automatically (every RETRY_SECONDS)
+    if the initial attempt — or any later attempt — fails, instead of
+    permanently giving up after one failure."""
+
+    RETRY_SECONDS = 20.0
 
     def __init__(
         self,
@@ -70,7 +77,16 @@ class PaperBroker:
         self._portfolio = portfolio or Portfolio(cash=starting_cash)
         self._prices: dict[str, float] = prices or {}
         self._lb: LongbridgeBroker | None = None
-        # Try to attach a Longbridge quote context so paper trades use real prices.
+        self._lb_last_attempt: float = 0.0
+        self._try_connect_lb(force=True)
+
+    def _try_connect_lb(self, force: bool = False) -> None:
+        """(Re)try connecting to Longbridge. Safe to call repeatedly — only
+        actually attempts a new connection every RETRY_SECONDS unless forced."""
+        now = time.monotonic()
+        if not force and (now - self._lb_last_attempt) < self.RETRY_SECONDS:
+            return
+        self._lb_last_attempt = now
         try:
             self._lb = LongbridgeBroker()
             LB_STATUS["connected"] = True
@@ -85,17 +101,27 @@ class PaperBroker:
     # ------------------------------------------------------------------
 
     def quote(self, symbol: str) -> Quote:
+        if self._lb is None:
+            self._try_connect_lb()   # retry — connection may have been transient
         if self._lb is not None:
             try:
                 q = self._lb.quote(symbol)
                 self._prices[symbol] = q.price
                 self._portfolio.last_prices[symbol] = q.price
+                LB_STATUS["connected"] = True
+                LB_STATUS["error"] = None
                 return Quote(symbol=symbol, price=q.price, timestamp=q.timestamp, source="longbridge-paper")
-            except Exception:
-                pass
+            except Exception as e:
+                # A previously-working connection just failed — drop it so
+                # _try_connect_lb() will attempt a fresh reconnect next time.
+                self._lb = None
+                LB_STATUS["connected"] = False
+                LB_STATUS["error"] = f"Quote fetch failed: {e}"
         return self._simulated_quote(symbol)
 
     def quotes(self, symbols: list[str]) -> list[Quote]:
+        if self._lb is None:
+            self._try_connect_lb()   # retry — connection may have been transient
         if self._lb is not None:
             try:
                 qs = self._lb.quotes(symbols)
@@ -106,17 +132,22 @@ class PaperBroker:
                 LB_STATUS["error"] = None
                 return [Quote(symbol=q.symbol, price=q.price, timestamp=q.timestamp, source="longbridge-paper") for q in qs]
             except Exception as e:
+                # A previously-working connection just failed — drop it so
+                # _try_connect_lb() will attempt a fresh reconnect next time.
+                self._lb = None
                 LB_STATUS["connected"] = False
                 LB_STATUS["error"] = f"Quote fetch failed: {e}"
         # Fall back: use last known real price as seed so sim starts from reality
         return [self._simulated_quote(s) for s in symbols]
 
     def discover_symbols(self, markets: list[str]) -> list[str]:
+        if self._lb is None:
+            self._try_connect_lb()
         if self._lb is not None:
             try:
                 return self._lb.discover_symbols(markets)
             except Exception:
-                pass
+                self._lb = None
         return []
 
     def submit_order(self, proposal: OrderProposal) -> OrderProposal:
