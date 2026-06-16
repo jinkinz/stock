@@ -457,9 +457,10 @@ class TradingEngine:
                 STATE._symbol_cache_at = time.monotonic()
 
         if STATE._symbol_cache:
-            STATE.universe_source = f"Longbridge ({len(STATE._symbol_cache)} symbols)"
             cap = STATE.settings.max_scan_symbols
-            return STATE._symbol_cache if cap == 0 else STATE._symbol_cache[:cap]
+            scanned = STATE._symbol_cache if cap == 0 else STATE._symbol_cache[:cap]
+            STATE.universe_source = f"Longbridge discovery cache: {len(STATE._symbol_cache)} found, scanning {len(scanned)}"
+            return scanned
 
         # 3. Fall back to expanded DEFAULT_UNIVERSES sample list
         STATE.universe_source = "sample fallback (set Longbridge credentials for full scan)"

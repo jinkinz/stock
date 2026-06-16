@@ -270,6 +270,12 @@ class LongbridgeBroker:
     # Quotes
     # ------------------------------------------------------------------
 
+    # Longbridge enforces a hard cap on symbols per quote() call. Sending more
+    # than this in one request fails or is silently truncated/rejected by the
+    # API, which previously caused the broker to look "disconnected" even
+    # though the credentials and connection were perfectly fine.
+    MAX_QUOTE_BATCH = 200
+
     def quote(self, symbol: str) -> Quote:
         quotes = self.quote_ctx.quote([symbol])
         first = quotes[0]
@@ -280,13 +286,16 @@ class LongbridgeBroker:
     def quotes(self, symbols: list[str]) -> list[Quote]:
         if not symbols:
             return []
-        responses = self.quote_ctx.quote(symbols)
         result: list[Quote] = []
-        for item in responses:
-            price = float(item.last_done)
-            symbol = item.symbol
-            self._portfolio.last_prices[symbol] = price
-            result.append(Quote(symbol=symbol, price=price, timestamp=datetime.now(timezone.utc).isoformat(), source="longbridge"))
+        # Batch into chunks — never send more than MAX_QUOTE_BATCH symbols at once
+        for i in range(0, len(symbols), self.MAX_QUOTE_BATCH):
+            chunk = symbols[i:i + self.MAX_QUOTE_BATCH]
+            responses = self.quote_ctx.quote(chunk)
+            for item in responses:
+                price = float(item.last_done)
+                symbol = item.symbol
+                self._portfolio.last_prices[symbol] = price
+                result.append(Quote(symbol=symbol, price=price, timestamp=datetime.now(timezone.utc).isoformat(), source="longbridge"))
         return result
 
     def discover_symbols(self, markets: list[str]) -> list[str]:
