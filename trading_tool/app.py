@@ -602,6 +602,14 @@ def quote_refresh_loop() -> None:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def handle_one_request(self) -> None:
+        # Suppress noisy tracebacks for normal client disconnects (browser tab
+        # closed, page navigated away, refresh mid-request). These are not bugs.
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         routes = {
@@ -754,10 +762,23 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+class QuietServer(ThreadingHTTPServer):
+    """Suppresses the default traceback printing for client disconnects
+    (BrokenPipeError, ConnectionResetError) — these happen any time a
+    browser tab is closed or a request is interrupted, and are not bugs."""
+
+    def handle_error(self, request, client_address) -> None:
+        import sys
+        exc_type = sys.exc_info()[0]
+        if exc_type in (BrokenPipeError, ConnectionResetError):
+            return  # expected on client disconnect — don't log
+        super().handle_error(request, client_address)
+
+
 def main() -> None:
     threading.Thread(target=auto_tick_loop, daemon=True).start()
     threading.Thread(target=quote_refresh_loop, daemon=True).start()
-    server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
+    server = QuietServer(("127.0.0.1", 8765), Handler)
     server.daemon_threads = True
     print("Trading tool running at http://127.0.0.1:8765")
     server.serve_forever()
