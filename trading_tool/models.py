@@ -49,6 +49,8 @@ class Settings:
     strategy_enabled: bool = False
     started_at: str | None = None
     target_profit: float = 0.0        # how much $ profit to aim for this session
+    target_profit_per_hour: float = 0.0  # pacing rate — overrides target_profit if set
+    lock_profit_pct: float = 0.0      # auto-sell a position once its unrealized gain hits this % (0 = off)
     ai_strategy_name: str = "fifo"    # which AI strategy to use
 
     def normalized(self) -> "Settings":
@@ -64,6 +66,12 @@ class Settings:
         self.max_trade_value = max(0.0, float(self.max_trade_value))
         self.tick_interval_seconds = max(5, int(self.tick_interval_seconds))
         self.target_profit = max(0.0, float(self.target_profit))
+        self.target_profit_per_hour = max(0.0, float(self.target_profit_per_hour))
+        self.lock_profit_pct = max(0.0, float(self.lock_profit_pct))
+        # If an hourly rate is set, it drives the session target automatically —
+        # e.g. $20/hr over a 390-minute (6.5hr) session = $130 target.
+        if self.target_profit_per_hour > 0:
+            self.target_profit = round(self.target_profit_per_hour * (self.duration_minutes / 60.0), 2)
         return self
 
     def active_universe(self) -> list[str]:

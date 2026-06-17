@@ -80,8 +80,24 @@ function render(data) {
   if (aiStrEl && data.ai_status?.strategy) aiStrEl.value = data.ai_status.strategy;
 
   const tpEl = el("targetProfit");
-  if (tpEl && document.activeElement !== tpEl)
+  if (tpEl && document.activeElement !== tpEl && !tpEl.disabled)
     tpEl.value = settings.target_profit || 0;
+
+  const tphEl = el("targetProfitPerHour");
+  if (tphEl && document.activeElement !== tphEl) {
+    tphEl.value = settings.target_profit_per_hour || 0;
+    // Keep target field locked/computed if an hourly rate is active server-side
+    if (tpEl && settings.target_profit_per_hour > 0) {
+      tpEl.value = settings.target_profit || 0;
+      tpEl.disabled = true;
+    } else if (tpEl) {
+      tpEl.disabled = false;
+    }
+  }
+
+  const lockEl = el("lockProfitPct");
+  if (lockEl && document.activeElement !== lockEl)
+    lockEl.value = settings.lock_profit_pct || 0;
 
   _updateStrategyDesc();
 
@@ -531,6 +547,24 @@ function _updateStrategyDesc() {
 
 el("aiStrategy")?.addEventListener("change", _updateStrategyDesc);
 
+// Live preview: typing $/hour shows the computed session target immediately,
+// using whatever duration is currently set in the form (falls back to state).
+el("targetProfitPerHour")?.addEventListener("input", () => {
+  const rate = parseFloat(el("targetProfitPerHour").value || "0");
+  const durationInput = el("duration_minutes");
+  const duration = parseFloat((durationInput && durationInput.value) || state.settings?.duration_minutes || 390);
+  const hint = el("targetProfitHint");
+  if (rate > 0) {
+    const computed = (rate * duration / 60).toFixed(2);
+    el("targetProfit").value = computed;
+    el("targetProfit").disabled = true;
+    if (hint) hint.textContent = `= $${computed} over ${duration} min (${(duration/60).toFixed(1)}hr) at $${rate}/hr`;
+  } else {
+    el("targetProfit").disabled = false;
+    if (hint) hint.textContent = "Set $/hour and it auto-calculates the session target. Or set Session Target directly and leave $/hour at 0.";
+  }
+});
+
 el("aiProvider").addEventListener("change", () => {
   const def = AI_DEFAULTS[el("aiProvider").value] || "";
   el("aiModel").placeholder = def || "enter model name";
@@ -542,14 +576,18 @@ el("saveAiBtn").addEventListener("click", async () => {
   const model    = el("aiModel").value.trim();
   const strategy = el("aiStrategy").value;
   const target   = parseFloat(el("targetProfit").value || "0");
+  const targetPerHour = parseFloat(el("targetProfitPerHour").value || "0");
+  const lockPct  = parseFloat(el("lockProfitPct").value || "0");
   const statusEl = el("aiConfigStatus");
   statusEl.style.color = "var(--muted)";
   statusEl.textContent = "Applying…";
   try {
-    // Save target_profit + ai_strategy_name to settings
+    // Save target_profit + target_profit_per_hour + lock_profit_pct + ai_strategy_name
     await api("/api/settings", { method: "POST", body: JSON.stringify({
       ...state.settings,
       target_profit: target,
+      target_profit_per_hour: targetPerHour,
+      lock_profit_pct: lockPct,
       ai_strategy_name: strategy,
     })});
     // Then hot-swap the AI provider/model/strategy

@@ -99,10 +99,22 @@
             </select>
           </div>
           <div id="strategyDesc" style="font-size:11px;color:var(--muted);padding:4px 2px;line-height:1.5;min-height:32px"></div>
-          <div class="field">
-            <label for="targetProfit">Profit Target ($) <span class="hint-inline">0 = no target</span></label>
-            <input id="targetProfit" type="number" min="0" step="any" value="0" placeholder="e.g. 100" />
+          <div class="field-row">
+            <div class="field">
+              <label for="targetProfitPerHour">Target $/Hour <span class="hint-inline">0 = off</span></label>
+              <input id="targetProfitPerHour" type="number" min="0" step="any" value="0" placeholder="e.g. 20" />
+            </div>
+            <div class="field">
+              <label for="targetProfit">Session Target ($)</label>
+              <input id="targetProfit" type="number" min="0" step="any" value="0" placeholder="e.g. 100" />
+            </div>
           </div>
+          <div id="targetProfitHint" class="hint-inline" style="padding:0 2px 4px">Set $/hour and it auto-calculates the session target. Or set Session Target directly and leave $/hour at 0.</div>
+          <div class="field">
+            <label for="lockProfitPct">Lock Profit At (%) <span class="hint-inline">0 = off</span></label>
+            <input id="lockProfitPct" type="number" min="0" step="0.1" value="0" placeholder="e.g. 0.5" />
+          </div>
+          <div class="hint-inline" style="padding:0 2px 8px">Guaranteed rule: any position gaining this % auto-sells immediately, regardless of AI judgment. Works alongside the AI's own strategy.</div>
           <div class="field">
             <label for="aiProvider">AI Provider</label>
             <select id="aiProvider">

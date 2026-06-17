@@ -340,7 +340,10 @@ def _build_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> st
         f"Cash available now:    ${portfolio.cash:.2f}",
         f"Max per trade:         ${settings.max_trade_value:.2f}",
         f"Max loss limit:        ${settings.max_loss:.2f}",
-        f"Profit target:         ${target:.2f}",
+        f"Profit target:         ${target:.2f}" + (
+            f" (${getattr(settings, 'target_profit_per_hour', 0):.2f}/hour pace)"
+            if getattr(settings, "target_profit_per_hour", 0) > 0 else ""
+        ),
         f"Realized P&L:          ${realized:.4f}",
         f"Unrealized P&L:        ${unrealized:.4f}",
         f"Total P&L so far:      ${total_pnl:.4f}",
@@ -349,6 +352,18 @@ def _build_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> st
         f"Time elapsed:          {minutes_elapsed} min",
         f"Time remaining:        {minutes_remaining} min of {settings.duration_minutes} total",
         f"Urgency:               {urgency}",
+    ]
+
+    lock_pct = getattr(settings, "lock_profit_pct", 0.0)
+    if lock_pct > 0:
+        lines.append(
+            f"AUTOMATIC RULE ACTIVE: any position reaching +{lock_pct:.2f}% gain will be "
+            f"AUTO-SOLD by the system regardless of your decision. Factor this in — there's "
+            f"no need to manually sell purely to lock profit below this threshold, the system "
+            f"already guarantees it. You can still sell earlier if your strategy calls for it."
+        )
+
+    lines += [
         "",
         "━━━ OPEN POSITIONS ━━━",
     ]

@@ -292,6 +292,24 @@ class TradingEngine:
                 if STATE.settings.stop_at_end:
                     self._close_positions_at_end(quotes)
             if STATE.settings.strategy_enabled:
+                # ── Mechanical profit lock — runs BEFORE the AI scan ──────────
+                # This is a hard guarantee, independent of AI judgment: any
+                # position whose unrealized gain hits lock_profit_pct gets sold
+                # immediately. The AI can still sell earlier on its own judgment;
+                # this just ensures it never happens later than the threshold.
+                lock_proposals = self._check_profit_locks(quotes)
+                pending_locks = {(i.symbol, i.side) for i in STATE.proposals if i.status is OrderStatus.PROPOSED}
+                for proposal in lock_proposals:
+                    if (proposal.symbol, proposal.side) in pending_locks:
+                        continue
+                    STATE.proposals.append(proposal)
+                    pending_locks.add((proposal.symbol, proposal.side))
+                    STATE.audit(AuditEventType.PROPOSAL, symbol=proposal.symbol, side=proposal.side.value,
+                                quantity=round(proposal.quantity, 6), price=proposal.price,
+                                confidence=round(proposal.confidence, 3), source="profit_lock")
+                    if STATE.settings.approval_mode is ApprovalMode.AUTO:
+                        self.execute(proposal)
+
                 signals, proposals = STATE.strategy.scan(STATE.settings, quotes, broker.portfolio())
                 STATE.signals = signals
                 for sig in signals:
@@ -318,7 +336,7 @@ class TradingEngine:
             for key in ("symbol", "markets", "universe", "budget", "duration_minutes", "max_scan_symbols",
                         "max_loss", "max_trade_value", "auto_tick_enabled", "tick_interval_seconds",
                         "allow_live_trading", "stop_at_end", "strategy_enabled",
-                        "target_profit", "ai_strategy_name"):
+                        "target_profit", "target_profit_per_hour", "lock_profit_pct", "ai_strategy_name"):
                 if key in payload:
                     setattr(settings, key, payload[key])
             if "trading_mode" in payload:
@@ -478,6 +496,32 @@ class TradingEngine:
             STATE.proposals.append(proposal)
             if STATE.settings.approval_mode is ApprovalMode.AUTO:
                 self.execute(proposal)
+
+    def _check_profit_locks(self, quotes) -> list[OrderProposal]:
+        """Mechanical, AI-independent rule: if lock_profit_pct is set (>0),
+        any open position whose unrealized gain reaches that % gets an
+        automatic SELL proposal — guaranteed, regardless of what the AI decides.
+        This runs every tick, before the AI gets a chance to act."""
+        lock_pct = STATE.settings.lock_profit_pct
+        if lock_pct <= 0:
+            return []
+        portfolio = STATE.broker().portfolio()
+        latest = {q.symbol: q for q in quotes}
+        proposals: list[OrderProposal] = []
+        for symbol, position in portfolio.positions.items():
+            if position.quantity <= 0 or position.avg_cost <= 0:
+                continue
+            quote = latest.get(symbol)
+            if quote is None:
+                continue
+            gain_pct = (quote.price / position.avg_cost - 1.0) * 100
+            if gain_pct >= lock_pct:
+                proposals.append(OrderProposal(
+                    symbol=symbol, side=Side.SELL, quantity=position.quantity,
+                    price=quote.price, confidence=1.0,
+                    reason=f"Profit lock triggered: +{gain_pct:.2f}% ≥ {lock_pct:.2f}% threshold.",
+                ))
+        return proposals
 
     def _find_proposal(self, proposal_id: str):
         return next((p for p in STATE.proposals if p.id == proposal_id), None)
