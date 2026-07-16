@@ -21,6 +21,7 @@
           <div class="status-row"><span class="status-label">Mode</span><span id="modeLabel" class="status-val">—</span></div>
           <div class="status-row"><span class="status-label">AI Brain</span><span id="aiStatus" class="status-val">—</span></div>
           <div class="status-row"><span class="status-label">Longbridge</span><span id="lbStatus" class="status-val">—</span></div>
+          <div class="status-row"><span class="status-label">Markets</span><span id="marketsOpen" class="status-val">—</span></div>
           <div class="status-row"><span class="status-label">Quote</span><span id="quoteSource" class="status-val">—</span></div>
           <div class="status-row"><span class="status-label">Universe</span><span id="universeSource" class="status-val">—</span></div>
           <div class="status-row"><span class="status-label">Last tick</span><span id="lastTick" class="status-val">Never</span></div>
@@ -110,11 +111,21 @@
             </div>
           </div>
           <div id="targetProfitHint" class="hint-inline" style="padding:0 2px 4px">Set $/hour and it auto-calculates the session target. Or set Session Target directly and leave $/hour at 0.</div>
-          <div class="field">
-            <label for="lockProfitPct">Lock Profit At (%) <span class="hint-inline">0 = off</span></label>
-            <input id="lockProfitPct" type="number" min="0" step="0.1" value="0" placeholder="e.g. 0.5" />
+          <div class="field-row">
+            <div class="field">
+              <label for="lockProfitPct">Lock Profit (%) <span class="hint-inline">0 = off</span></label>
+              <input id="lockProfitPct" type="number" min="0" step="0.1" value="0" placeholder="e.g. 0.5" />
+            </div>
+            <div class="field">
+              <label for="stopLossPct">Stop Loss (%) <span class="hint-inline">0 = off</span></label>
+              <input id="stopLossPct" type="number" min="0" step="0.1" value="2" placeholder="e.g. 2" />
+            </div>
           </div>
-          <div class="hint-inline" style="padding:0 2px 8px">Guaranteed rule: any position gaining this % auto-sells immediately, regardless of AI judgment. Works alongside the AI's own strategy.</div>
+          <div class="field">
+            <label for="trailingStopPct">Trailing Stop (%) <span class="hint-inline">0 = off</span></label>
+            <input id="trailingStopPct" type="number" min="0" step="0.1" value="0" placeholder="e.g. 1" />
+          </div>
+          <div class="hint-inline" style="padding:0 2px 8px">Guaranteed mechanical rules, independent of AI judgment: Lock Profit sells a position once it gains that %; Stop Loss sells once it loses that % from entry; Trailing Stop sells a profitable position falling that % below its peak.</div>
           <div class="field">
             <label for="aiProvider">AI Provider</label>
             <select id="aiProvider">
@@ -187,7 +198,7 @@
           <section class="card">
             <div class="card-header">
               <h2>AI Ranking <span id="signalsTs" class="section-ts"></span></h2>
-              <span class="hint-inline">Momentum · 0.2% threshold</span>
+              <span class="hint-inline">Day momentum · VWAP · EMA · RSI</span>
             </div>
             <div id="signals" class="card-body">
               <div class="empty-state">No scan yet</div>

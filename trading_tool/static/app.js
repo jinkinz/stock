@@ -99,6 +99,14 @@ function render(data) {
   if (lockEl && document.activeElement !== lockEl)
     lockEl.value = settings.lock_profit_pct || 0;
 
+  const slEl = el("stopLossPct");
+  if (slEl && document.activeElement !== slEl)
+    slEl.value = settings.stop_loss_pct ?? 2;
+
+  const tsEl2 = el("trailingStopPct");
+  if (tsEl2 && document.activeElement !== tsEl2)
+    tsEl2.value = settings.trailing_stop_pct || 0;
+
   _updateStrategyDesc();
 
   const aiCfgStatus = el("aiConfigStatus");
@@ -127,6 +135,23 @@ function render(data) {
     lbEl.textContent = lb_connected ? "Connected" : "Disconnected";
     lbEl.className   = "status-val " + (lb_connected ? "ok" : "warn");
     lbEl.title       = lb_error || (lb_connected ? "Real prices active" : "Simulated prices");
+  }
+
+  const moEl = el("marketsOpen");
+  if (moEl) {
+    const mo = data.markets_open;
+    if (!mo) {
+      moEl.textContent = "24/7 (sim)";
+      moEl.className = "status-val";
+      moEl.title = "Simulated prices move around the clock — market-hours gate applies only with Longbridge connected";
+    } else {
+      const anyOpen = Object.values(mo).some(Boolean);
+      moEl.textContent = Object.entries(mo).map(([m, open]) => `${m} ${open ? "✓" : "✗"}`).join(" · ");
+      moEl.className = "status-val " + (anyOpen ? "ok" : "warn");
+      moEl.title = anyOpen
+        ? "Only open markets are scanned and traded"
+        : "All selected markets are closed — scanning paused until open";
+    }
   }
 
   const qsEl = el("quoteSource");
@@ -323,12 +348,17 @@ function renderSignals(signals, updatedAt) {
 function renderQuotes(quotes) {
   const container = el("quote");
   if (!quotes.length) { container.innerHTML = `<div class="empty-state">No quotes yet</div>`; return; }
-  container.innerHTML = quotes.slice(0, 15).map(q => `
+  container.innerHTML = quotes.slice(0, 15).map(q => {
+    const chg = q.prev_close > 0 ? (q.price / q.prev_close - 1) * 100 : null;
+    const chgHtml = chg === null ? "" :
+      `<div class="${chg >= 0 ? "gain" : "loss"}" style="font-size:11px">${pctStr(chg)}</div>`;
+    return `
     <div class="quote-row">
       <div><span class="quote-sym">${q.symbol}</span>
         <div class="quote-meta">${q.source} · ${new Date(q.timestamp).toLocaleTimeString()}</div></div>
-      <strong>${money(q.price)}</strong>
-    </div>`).join("");
+      <div style="text-align:right"><strong>${money(q.price)}</strong>${chgHtml}</div>
+    </div>`;
+  }).join("");
 }
 
 // ─────────────────────────────────────────────
@@ -342,17 +372,23 @@ function renderDiagnostics(signals, updatedAt) {
   if (!withDiag.length) { container.innerHTML = `<div class="empty-state">No diagnostics yet</div>`; return; }
 
   container.innerHTML = `<table class="data-table">
-    <thead><tr><th>Symbol</th><th>Price</th><th>Volatility</th><th>Spread</th><th>Trend</th><th>Vol Spike</th><th>News</th></tr></thead>
+    <thead><tr><th>Symbol</th><th>Price</th><th>Day Δ</th><th>RSI</th><th>VWAP</th><th>EMA</th><th>Turnover</th><th>Volatility</th><th>Vol Spike</th></tr></thead>
     <tbody>${withDiag.map(s => {
       const d = s.diagnostics;
+      const dayCls = (d.day_change_pct || 0) > 0 ? "gain" : (d.day_change_pct || 0) < 0 ? "loss" : "";
+      const rsi = d.rsi || 0;
+      const vwap = d.vwap_dist_pct || 0;
+      const turnover = d.turnover ? (d.turnover >= 1e9 ? (d.turnover/1e9).toFixed(1)+"B" : (d.turnover/1e6).toFixed(1)+"M") : "—";
       return `<tr>
         <td><strong>${d.symbol}</strong></td>
         <td>${money(d.price)}</td>
+        <td class="${dayCls}">${d.day_change_pct ? pctStr(d.day_change_pct) : "—"}</td>
+        <td>${rsi ? `<span class="badge-pill ${rsi >= 75 ? "danger" : rsi <= 30 ? "warn" : "ok"}">${rsi.toFixed(0)}</span>` : "—"}</td>
+        <td class="${vwap > 0 ? "gain" : vwap < 0 ? "loss" : ""}">${vwap ? pctStr(vwap) : "—"}</td>
+        <td>${d.ema_trend ? `<span class="badge-pill ${d.ema_trend === "bull" ? "ok" : "danger"}">${d.ema_trend}</span>` : "—"}</td>
+        <td>${turnover}</td>
         <td><span class="badge-pill ${d.volatility > 40 ? "warn" : "ok"}">${d.volatility.toFixed(1)}%</span></td>
-        <td>${(d.spread_pct * 100).toFixed(2)}%</td>
-        <td>${d.trend_strength.toFixed(2)}%</td>
         <td><span class="badge-pill ${d.volume_spike ? "danger" : "ok"}">${d.volume_spike ? "SPIKE" : "normal"}</span></td>
-        <td><span class="badge-pill ${d.news_gate ? "ok" : "warn"}">${d.news_gate ? "open" : "blocked"}</span></td>
       </tr>`;
     }).join("")}</tbody></table>`;
 }
@@ -436,7 +472,10 @@ function renderBacktest(result) {
     <svg class="equity-chart" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
       <polyline points="${pts}" fill="none" stroke="var(--green)" stroke-width="2"/>
     </svg>
-    <div style="padding:0 16px 12px;font-size:11px;color:var(--muted)">${result.ticks} simulated ticks · ${result.symbols.join(", ")} · ${new Date(result.ran_at).toLocaleTimeString()}</div>`;
+    <div style="padding:0 16px 12px;font-size:11px;color:var(--muted)">
+      <div style="padding-bottom:4px;${(result.data_source||"").startsWith("SIMULATED") ? "color:var(--red)" : "color:var(--green)"}">Data: ${result.data_source || "simulated"}</div>
+      ${result.ticks} bars · ${result.symbols.join(", ")} · ${new Date(result.ran_at).toLocaleTimeString()}
+    </div>`;
 }
 
 // ─────────────────────────────────────────────
@@ -522,7 +561,7 @@ el("sessionsTab").addEventListener("click", loadSessions);
 // AI Brain config
 // ─────────────────────────────────────────────
 const AI_DEFAULTS = {
-  anthropic: "claude-sonnet-4-20250514",
+  anthropic: "claude-opus-4-8",
   openai: "gpt-4o",
   gemini: "gemini-2.5-flash",
   openrouter: "meta-llama/llama-3.3-70b-instruct",
@@ -578,6 +617,8 @@ el("saveAiBtn").addEventListener("click", async () => {
   const target   = parseFloat(el("targetProfit").value || "0");
   const targetPerHour = parseFloat(el("targetProfitPerHour").value || "0");
   const lockPct  = parseFloat(el("lockProfitPct").value || "0");
+  const stopPct  = parseFloat(el("stopLossPct").value || "0");
+  const trailPct = parseFloat(el("trailingStopPct").value || "0");
   const statusEl = el("aiConfigStatus");
   statusEl.style.color = "var(--muted)";
   statusEl.textContent = "Applying…";
@@ -588,6 +629,8 @@ el("saveAiBtn").addEventListener("click", async () => {
       target_profit: target,
       target_profit_per_hour: targetPerHour,
       lock_profit_pct: lockPct,
+      stop_loss_pct: stopPct,
+      trailing_stop_pct: trailPct,
       ai_strategy_name: strategy,
     })});
     // Then hot-swap the AI provider/model/strategy

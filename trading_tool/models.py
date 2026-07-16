@@ -51,6 +51,8 @@ class Settings:
     target_profit: float = 0.0        # how much $ profit to aim for this session
     target_profit_per_hour: float = 0.0  # pacing rate — overrides target_profit if set
     lock_profit_pct: float = 0.0      # auto-sell a position once its unrealized gain hits this % (0 = off)
+    stop_loss_pct: float = 2.0        # auto-sell a position once it loses this % from entry (0 = off)
+    trailing_stop_pct: float = 0.0    # auto-sell if price falls this % from its peak while in profit (0 = off)
     ai_strategy_name: str = "fifo"    # which AI strategy to use
 
     def normalized(self) -> "Settings":
@@ -61,13 +63,15 @@ class Settings:
             self.markets = ["US"]
         self.budget = max(0.0, float(self.budget))
         self.duration_minutes = max(1, int(self.duration_minutes))
-        self.max_scan_symbols = max(0, min(500, int(self.max_scan_symbols)))
+        self.max_scan_symbols = max(0, min(2000, int(self.max_scan_symbols)))
         self.max_loss = max(0.0, float(self.max_loss))
         self.max_trade_value = max(0.0, float(self.max_trade_value))
         self.tick_interval_seconds = max(5, int(self.tick_interval_seconds))
         self.target_profit = max(0.0, float(self.target_profit))
         self.target_profit_per_hour = max(0.0, float(self.target_profit_per_hour))
         self.lock_profit_pct = max(0.0, float(self.lock_profit_pct))
+        self.stop_loss_pct = max(0.0, float(self.stop_loss_pct))
+        self.trailing_stop_pct = max(0.0, float(self.trailing_stop_pct))
         # If an hourly rate is set, it drives the session target automatically —
         # e.g. $20/hr over a 390-minute (6.5hr) session = $130 target.
         if self.target_profit_per_hour > 0:
@@ -89,6 +93,7 @@ class Position:
     symbol: str
     quantity: float = 0.0
     avg_cost: float = 0.0
+    peak_price: float = 0.0          # high-water mark since entry — drives trailing stop
 
 
 @dataclass
@@ -97,6 +102,13 @@ class Quote:
     price: float
     timestamp: str
     source: str
+    # Real intraday context from the exchange (0.0 = not available, e.g. sim mode)
+    prev_close: float = 0.0
+    open: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    volume: float = 0.0
+    turnover: float = 0.0
 
 
 @dataclass
@@ -109,6 +121,13 @@ class Diagnostics:
     volume_spike: bool = False        # True when recent tick-count is >2× baseline
     trend_strength: float = 0.0      # abs(short_avg/long_avg - 1) × 100
     news_gate: bool = True            # True = OK to trade; False = news blackout (stub)
+    # Real-market metrics (0.0 / "" when data unavailable)
+    day_change_pct: float = 0.0      # % vs previous close
+    from_high_pct: float = 0.0       # % below the day high (≤ 0)
+    turnover: float = 0.0            # traded value today — liquidity gate
+    rsi: float = 0.0                 # RSI(14) from 1-min candles
+    vwap_dist_pct: float = 0.0       # % above (+) / below (−) session VWAP
+    ema_trend: str = ""              # "bull" (EMA9>EMA21), "bear", or "" unknown
 
 
 @dataclass

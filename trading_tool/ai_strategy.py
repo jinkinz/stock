@@ -36,8 +36,10 @@ PROVIDERS: dict[str, dict] = {
     "anthropic": {
         "label": "Anthropic Claude",
         "env_key": "ANTHROPIC_API_KEY",
-        "default_model": "claude-sonnet-4-20250514",
-        "models": ["claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
+        # claude-sonnet-4-20250514 / claude-opus-4-20250514 were RETIRED
+        # 2026-06-15 and now 404. Current model IDs below.
+        "default_model": "claude-opus-4-8",
+        "models": ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
     },
     "openai": {
         "label": "OpenAI",
@@ -362,6 +364,18 @@ def _build_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> st
             f"no need to manually sell purely to lock profit below this threshold, the system "
             f"already guarantees it. You can still sell earlier if your strategy calls for it."
         )
+    stop_pct = getattr(settings, "stop_loss_pct", 0.0)
+    if stop_pct > 0:
+        lines.append(
+            f"AUTOMATIC RULE ACTIVE: any position losing {stop_pct:.2f}% from entry is "
+            f"AUTO-SOLD by the system (hard stop loss). You may exit losers earlier."
+        )
+    trail_pct = getattr(settings, "trailing_stop_pct", 0.0)
+    if trail_pct > 0:
+        lines.append(
+            f"AUTOMATIC RULE ACTIVE: a trailing stop sells any profitable position that "
+            f"falls {trail_pct:.2f}% below its peak price."
+        )
 
     lines += [
         "",
@@ -387,9 +401,21 @@ def _build_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> st
         d = sig.diagnostics
         diag = ""
         if d:
-            diag = f" | vol={d.volatility:.1f}% trend={d.trend_strength:.2f}%"
+            parts = []
+            if d.day_change_pct:
+                parts.append(f"day {d.day_change_pct:+.2f}%")
+            if d.rsi:
+                parts.append(f"RSI {d.rsi:.0f}")
+            if d.vwap_dist_pct:
+                parts.append(f"VWAP {d.vwap_dist_pct:+.2f}%")
+            if d.ema_trend:
+                parts.append(f"EMA {d.ema_trend}")
+            if d.turnover:
+                parts.append(f"turnover ${d.turnover/1e6:.1f}M")
+            parts.append(f"vol {d.volatility:.0f}%")
             if d.volume_spike:
-                diag += " ⚡SPIKE"
+                parts.append("⚡SPIKE")
+            diag = " | " + " ".join(parts)
         lines.append(
             f"  {sig.symbol}: {sig.action.upper()} | score={sig.score:.3f} | "
             f"price=${sig.price:.4f}{diag}"
@@ -439,6 +465,15 @@ class AIStrategy:
         AI_STATUS.strategy = self._strategy
         AI_STATUS.connected = self._provider not in ("none", "")
         AI_STATUS.error = ""
+
+    def ingest_candles(self, symbol: str, candles: list[dict]) -> None:
+        self._fallback.ingest_candles(symbol, candles)
+
+    def scan_signals_only(self, settings: Settings, quotes: list, portfolio: Portfolio) -> list:
+        """Momentum signals without any AI call. Used by UI refresh paths so
+        display updates never burn paid API tokens."""
+        signals, _ = self._fallback.scan(settings, quotes, portfolio)
+        return signals
 
     def scan(self, settings: Settings, quotes: list, portfolio: Portfolio) -> tuple[list, list[OrderProposal]]:
         # Always run momentum for signal generation (cheap, no API call)
