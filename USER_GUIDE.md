@@ -274,13 +274,22 @@ Once per 30 minutes, with Longbridge connected:
 
 1. `security_list` discovers the full tradable market (30,000+ US symbols;
    HK/SG via index constituents).
-2. One bulk quote pass ranks everything by **turnover** (dollars traded today).
-3. The top slice — your Max Symbols setting, ceiling 2000 — becomes the
+2. One bulk quote pass ranks everything by **turnover** (dollars traded today),
+   **bucketed per market**. Each selected market gets an equal share of the
+   cap first, then the big US bucket absorbs the remainder.
+3. The combined slice — your Max Symbols setting, ceiling 2000 — becomes the
    working set that every tick actually scans.
 
 Why turnover? Day trading needs liquidity: tight spreads, instant fills, real
-price discovery. The top-2000-by-turnover slice is where all of that lives;
-the other 28,000 symbols are mostly untradeable noise for a retail day trader.
+price discovery. The most-liquid slice is where all of that lives; the other
+28,000 symbols are mostly untradeable noise for a retail day trader.
+
+**Why per-market bucketing matters:** a single global turnover sort is
+dominated by US names (their traded value dwarfs HK/SG), so the top-2000 would
+be *entirely US*. Whenever US is closed but HK/SG are open, the market-hours
+gate would then strip every symbol and the tool would scan **nothing** — no
+ticks, no signals — for the whole Asia session. Bucketing per market
+guarantees the open market always has liquid names to trade.
 
 ### 9.3 Layer 1 — the signal engine, formula by formula
 
@@ -288,29 +297,42 @@ Every symbol gets a composite score in [0, 1]. The weights:
 
 | Factor | Formula | Weight | Day-trader logic |
 |---|---|---|---|
-| Day momentum | `clamp(day_change% / 5, −0.5, 1)` | ×0.35 | Stocks up on the day tend to continue intraday; gains past +5% are treated as already-chased |
-| Range position | `(price − day_low) / (day_high − day_low)` | ×0.20 | Price near the day high = buyers in control = breakout behaviour |
-| Tick momentum | `clamp(3-tick avg / 30-tick avg − 1, ±0.25%) × 400` | ×0.15 | Short-term confirmation that the move is happening *now* |
+| Day momentum | `clamp(day_change% / 5, −0.5, 1)` | ×0.30 | Stocks up on the day tend to continue intraday; gains past +5% are treated as already-chased |
+| Range position | `(price − day_low) / (day_high − day_low)` | ×0.15 | Price near the day high = buyers in control = breakout behaviour |
+| Tick momentum | `clamp(3-tick avg / 30-tick avg − 1, ±0.25%) × 400` | ×0.10 | Short-term confirmation that the move is happening *now* |
 | VWAP position | above VWAP +0.15, below −0.15 | ±0.15 | VWAP is the institutional fair-value line; longs are defended above it |
 | EMA trend | EMA9 > EMA21 +0.15, else −0.15 | ±0.15 | Classic short-term trend filter |
+| Volume surge | `clamp((rvol − 1) / 1.5, −0.5, 1)` | ×0.15 | Real momentum expands volume; a breakout on drying volume is a fakeout |
+
+`rvol` (relative volume) = recent-3-minute average volume ÷ session average
+per-minute volume, from the 1-minute candles. >1 = heavier than the session
+average, <0.7 = drying up.
 
 **Indicator math** (computed from 120 × 1-minute candles):
 - **VWAP** = Σ(typical price × volume) / Σ(volume), typical = (close+high+low)/3
 - **EMA** with standard smoothing k = 2/(span+1)
 - **RSI(14)** with Wilder averaging of gains vs losses
+- **RVOL** = recent 3-min avg volume ÷ session avg per-minute volume
 
 **A BUY signal requires all of:**
 - composite score ≥ **0.55**
 - day change **positive**
 - RSI **< 75** (never buy overbought)
 - turnover ≥ **$500,000** today (liquidity gate — hard skip below this)
+- price **at or above VWAP** (never initiate a long below institutional fair
+  value; a VWAP of 0 means "no candles yet" and does not block)
 - no position already held in the symbol
 
 **A SELL signal (for a held position) fires on any reversal sign:**
 - RSI ≥ 80 (exhaustion), or
 - price below VWAP **and** EMA9 < EMA21 (trend broken), or
-- tick momentum < −0.2%, or
+- price below VWAP **and** tick momentum < −0.3%, or
 - day change < −1%
+
+Note the momentum- and trend-based exits now require a **VWAP loss** to
+confirm. A position still holding above VWAP is not shaken out by tick noise —
+hard risk (stop-loss / trailing-stop) is still enforced independently by the
+engine regardless of what the signal engine thinks.
 
 Everything else is a WATCH with a sub-0.5 score. Every signal carries a
 human-readable reason built from the factors that actually fired, e.g.

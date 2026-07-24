@@ -653,16 +653,48 @@ class TradingEngine:
 
     def _rank_by_liquidity(self, broker, symbols: list[str]) -> list[str]:
         """One bulk quote pass over the discovered universe, ranked by today's
-        turnover (traded value). Returns the top MAX_UNLIMITED_SCAN symbols —
-        the slice of the market where day trading is actually possible."""
-        try:
-            quotes = broker.quotes(symbols[: self.MAX_RANK_PASS])
-        except Exception:
-            return symbols
-        if not quotes or all(q.turnover <= 0 for q in quotes):
-            return symbols   # no turnover data — keep original order
-        ranked = sorted(quotes, key=lambda q: q.turnover, reverse=True)
-        return [q.symbol for q in ranked[: self.MAX_UNLIMITED_SCAN]]
+        turnover (traded value), but bucketed PER MARKET so every selected
+        market keeps a slice of the working set.
+
+        A single global turnover sort is dominated by US names (their traded
+        value is orders of magnitude larger than HK/SG), which starves the
+        Asia markets entirely. The tool would then scan NOTHING whenever US is
+        closed but HK/SG are open — exactly the "no ticks, no scan" symptom.
+        Returns at most MAX_UNLIMITED_SCAN symbols, allocated across markets."""
+        buckets: dict[str, list[str]] = {}
+        for s in symbols:
+            buckets.setdefault(market_of(s), []).append(s)
+
+        ranked_by_market: dict[str, list[str]] = {}
+        for mkt, syms in buckets.items():
+            try:
+                quotes = broker.quotes(syms[: self.MAX_RANK_PASS])
+            except Exception:
+                quotes = []
+            if quotes and any(q.turnover > 0 for q in quotes):
+                quotes.sort(key=lambda q: q.turnover, reverse=True)
+                ranked_by_market[mkt] = [q.symbol for q in quotes]
+            else:
+                ranked_by_market[mkt] = list(syms)  # no turnover data — keep order
+
+        # Give each market an equal share of the cap first (guarantees Asia
+        # names survive), then let the remaining capacity fill from whatever is
+        # left — in practice the big US bucket absorbs it.
+        cap = self.MAX_UNLIMITED_SCAN
+        markets = list(ranked_by_market.keys())
+        if not markets:
+            return symbols[:cap]
+        share = max(1, cap // len(markets))
+        result: list[str] = []
+        leftovers: list[str] = []
+        for mkt in markets:
+            lst = ranked_by_market[mkt]
+            result.extend(lst[:share])
+            leftovers.extend(lst[share:])
+        remaining = cap - len(result)
+        if remaining > 0:
+            result.extend(leftovers[:remaining])
+        return result[:cap]
 
     def _close_positions_at_end(self, quotes) -> None:
         portfolio = STATE.broker().portfolio()

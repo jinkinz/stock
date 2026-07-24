@@ -128,6 +128,7 @@ class Diagnostics:
     rsi: float = 0.0                 # RSI(14) from 1-min candles
     vwap_dist_pct: float = 0.0       # % above (+) / below (−) session VWAP
     ema_trend: str = ""              # "bull" (EMA9>EMA21), "bear", or "" unknown
+    vol_surge: float = 0.0           # recent vs session-avg minute volume (RVOL proxy)
 
 
 @dataclass

@@ -89,11 +89,24 @@ def compute_indicators(candles: list[dict]) -> dict:
             vol += v
     vwap = pv / vol if vol > 0 else sum(closes) / len(closes)
 
+    # Volume surge (RVOL proxy): recent-minute volume vs the session's average
+    # per-minute volume. A genuine momentum move is confirmed by expanding
+    # volume; a breakout on thin volume is usually a fakeout. >1.0 = heavier
+    # than the session average, <1.0 = drying up.
+    vols = [c.get("volume", 0) or 0 for c in candles]
+    vol_surge = 0.0
+    if len(vols) >= 10:
+        base = sum(vols) / len(vols)
+        if base > 0:
+            recent = sum(vols[-3:]) / 3
+            vol_surge = round(recent / base, 2)
+
     return {
         "ema9": ema(closes, 9),
         "ema21": ema(closes, 21),
         "rsi": round(rsi, 1),
         "vwap": vwap,
+        "vol_surge": vol_surge,
     }
 
 
@@ -190,6 +203,7 @@ class MomentumStrategy:
         ema_trend = ""
         if ind.get("ema9") and ind.get("ema21"):
             ema_trend = "bull" if ind["ema9"] > ind["ema21"] else "bear"
+        vol_surge = ind.get("vol_surge", 0.0)
 
         return Diagnostics(
             symbol=quote.symbol,
@@ -205,6 +219,7 @@ class MomentumStrategy:
             rsi=rsi,
             vwap_dist_pct=vwap_dist_pct,
             ema_trend=ema_trend,
+            vol_surge=vol_surge,
         )
 
     # ------------------------------------------------------------------
@@ -315,18 +330,18 @@ class MomentumStrategy:
         score = 0.0
 
         # Day momentum: reward gains up to +5% (beyond that it's usually chased)
-        day_component = clamp(day_chg / 5.0, -0.5, 1.0) * 0.35
+        day_component = clamp(day_chg / 5.0, -0.5, 1.0) * 0.30
         score += day_component
         if day_chg != 0:
             reasons.append(f"day {day_chg:+.2f}%")
 
         # Buying strength near the day high = breakout behaviour
-        score += range_pos * 0.20
+        score += range_pos * 0.15
         if range_pos > 0.8:
             reasons.append("near day high")
 
         # Tick momentum confirmation
-        score += clamp(momentum * 400, -1.0, 1.0) * 0.15
+        score += clamp(momentum * 400, -1.0, 1.0) * 0.10
 
         # VWAP: institutions defend it — above is long territory
         if diag.vwap_dist_pct != 0.0:
@@ -345,21 +360,38 @@ class MomentumStrategy:
             score -= 0.15
             reasons.append("EMA9<21")
 
+        # Volume surge: a real momentum move is confirmed by expanding volume.
+        # Reward heavier-than-average tape (surge>1), penalise volume drying up
+        # on the breakout (surge<0.7) — the classic low-volume fakeout.
+        vsurge = diag.vol_surge
+        if vsurge > 0:
+            score += clamp((vsurge - 1.0) / 1.5, -0.5, 1.0) * 0.15
+            if vsurge >= 1.5:
+                reasons.append(f"vol {vsurge:.1f}x surge")
+            elif vsurge < 0.7:
+                reasons.append(f"vol {vsurge:.1f}x thin")
+
         overbought = diag.rsi >= 75
         exhausted = diag.rsi >= 80
         if overbought:
             reasons.append(f"RSI {diag.rsi:.0f} overbought")
         illiquid = 0 < quote.turnover < MIN_TURNOVER
+        # Don't initiate a momentum long below institutional fair value. VWAP of
+        # 0 means "unknown" (no candles fetched yet) and does NOT block.
+        below_vwap = diag.vwap_dist_pct < 0
 
         score = clamp(score, 0.0, 0.99)
         reason_txt = ", ".join(reasons) if reasons else "no strong factors"
 
         # ── SELL: held position showing reversal ─────────────────────────
+        # Require confirmation (a VWAP loss) for momentum-based exits so tick
+        # noise alone doesn't shake us out of a position still trending above
+        # VWAP. Hard risk (stop/trailing) is enforced separately in the engine.
         if held_quantity > 0:
             reversal = (
                 exhausted
-                or (diag.vwap_dist_pct < 0 and diag.ema_trend == "bear")
-                or momentum < -0.002
+                or (below_vwap and diag.ema_trend == "bear")
+                or (below_vwap and momentum < -0.003)
                 or day_chg < -1.0
             )
             if reversal:
@@ -376,15 +408,20 @@ class MomentumStrategy:
                 diagnostics=diag,
             )
 
-        # ── BUY: strong composite, liquid, not overbought ────────────────
-        if score >= 0.55 and day_chg > 0 and not overbought and not illiquid:
+        # ── BUY: strong composite, liquid, not overbought, above VWAP ────
+        if score >= 0.55 and day_chg > 0 and not overbought and not illiquid and not below_vwap:
             return Signal(
                 symbol=quote.symbol, price=quote.price, score=score, action="buy",
                 reason=f"Uptrend: {reason_txt}.",
                 diagnostics=diag,
             )
 
-        watch_note = "illiquid — skipped" if illiquid else reason_txt
+        if below_vwap and score >= 0.55:
+            watch_note = f"below VWAP — waiting for reclaim ({reason_txt})"
+        elif illiquid:
+            watch_note = "illiquid — skipped"
+        else:
+            watch_note = reason_txt
         return Signal(
             symbol=quote.symbol, price=quote.price,
             score=clamp(score, 0.0, 0.5), action="watch",

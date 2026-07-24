@@ -19,7 +19,7 @@
     "allow_live_trading": false,
     "stop_at_end": true,
     "strategy_enabled": true,
-    "started_at": "2026-07-16T17:01:21.189848+00:00",
+    "started_at": "2026-07-24T05:42:34.215842+00:00",
     "target_profit": 305.5,
     "target_profit_per_hour": 47.0,
     "lock_profit_pct": 0.0,
@@ -37,7 +37,7 @@
     "prices": {}
   },
   "proposals": [],
-  "last_tick_at": "2026-07-16T17:07:55.603621+00:00",
+  "last_tick_at": "2026-07-24T06:39:38.403406+00:00",
   "tick_paused": false,
   "session_start_at": null,
   "session_start_equity": 0.0
