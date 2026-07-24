@@ -157,6 +157,7 @@ class AIStatus:
     last_call_at: float = 0.0
     call_count: int = 0
     fallback_count: int = 0
+    skipped_count: int = 0        # ticks where the AI call was skipped as unnecessary
 
     def as_dict(self) -> dict:
         return {
@@ -168,6 +169,7 @@ class AIStatus:
             "last_call_at": self.last_call_at,
             "call_count": self.call_count,
             "fallback_count": self.fallback_count,
+            "skipped_count": self.skipped_count,
         }
 
 AI_STATUS = AIStatus()
@@ -216,12 +218,58 @@ def _call_openai_compat(base_url: str, api_key: str, model: str, system: str, us
         return json.loads(resp.read())["choices"][0]["message"]["content"]
 
 def _call_gemini(api_key: str, model: str, system: str, user: str) -> str:
+    gen_cfg = {"maxOutputTokens": 2048}
+    # Gemini 2.5 models "think" by default, and that reasoning is billed against
+    # maxOutputTokens — it can eat the whole budget before the JSON answer is
+    # emitted, truncating it mid-string ("Unterminated string" on parse). Flash
+    # lets us switch thinking off so the full budget goes to the answer.
+    if "flash" in model or "2.0" in model or "1.5" in model:
+        gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
     payload = json.dumps({"contents": [{"parts": [{"text": f"{system}\n\n{user}"}]}],
-                          "generationConfig": {"maxOutputTokens": 1500}}).encode()
+                          "generationConfig": gen_cfg}).encode()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())["candidates"][0]["content"]["parts"][0]["text"]
+        data = json.loads(resp.read())
+    cand = (data.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts).strip()
+    if not text:
+        raise ValueError(f"Gemini returned no usable text (finishReason={cand.get('finishReason', '?')})")
+    return text
+
+def _salvage_json_objects(text: str) -> list:
+    """Recover the complete objects from a truncated JSON array. Walks the text
+    tracking brace depth (ignoring braces inside strings) and keeps everything
+    up to the last top-level object that closed cleanly."""
+    depth = 0
+    in_str = False
+    escape = False
+    last_complete = -1
+    for i, ch in enumerate(text):
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                last_complete = i
+    if last_complete == -1:
+        return []
+    try:
+        return json.loads(text[: last_complete + 1] + "]")
+    except json.JSONDecodeError:
+        return []
+
 
 def _call_ai(provider: str, model: str, system: str, user: str) -> str:
     if provider == "anthropic":
@@ -397,7 +445,7 @@ def _build_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> st
         lines.append("  (no open positions — all cash)")
 
     lines += ["", "━━━ MARKET SIGNALS (best opportunities, ranked) ━━━"]
-    for sig in signals[:20]:
+    for sig in signals[:12]:
         d = sig.diagnostics
         diag = ""
         if d:
@@ -441,11 +489,17 @@ def _build_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> st
 # Main AIStrategy class
 # ─────────────────────────────────────────────────────────────────────────────
 class AIStrategy:
-    THROTTLE_SECONDS = 30
+    # Minimum seconds between AI calls (hard rate cap). Beyond this the call is
+    # gated further by whether there is actually a decision to make.
+    THROTTLE_SECONDS = float(os.environ.get("AI_MIN_INTERVAL_SECONDS", "30"))
+    # When holding positions with an unchanged decision picture, still re-consult
+    # the AI at least this often so it can re-evaluate as the session ages.
+    HEARTBEAT_SECONDS = float(os.environ.get("AI_HEARTBEAT_SECONDS", "180"))
 
     def __init__(self) -> None:
         self._fallback = MomentumStrategy()
         self._last_call = 0.0
+        self._last_fingerprint = None   # decision snapshot at the last AI call
         self._provider, self._model, self._strategy = _resolve_config()
         AI_STATUS.provider = self._provider
         AI_STATUS.model = self._model
@@ -475,6 +529,35 @@ class AIStrategy:
         signals, _ = self._fallback.scan(settings, quotes, portfolio)
         return signals
 
+    @staticmethod
+    def _held_symbols(portfolio: Portfolio) -> set:
+        return {s for s, p in portfolio.positions.items() if p.quantity > 0}
+
+    def _actionable(self, signals: list, portfolio: Portfolio) -> bool:
+        """Is there any decision worth spending an AI call on? Two cases:
+        we hold something (needs managing), or there's a buy candidate we can
+        actually afford. Otherwise the AI can only return [] — skip it."""
+        if self._held_symbols(portfolio):
+            return True
+        if portfolio.cash >= 1.0 and any(s.action == "buy" for s in signals):
+            return True
+        return False
+
+    def _decision_fingerprint(self, signals: list, portfolio: Portfolio, settings: Settings):
+        """A coarse snapshot of the state the AI reasons about. If it hasn't
+        changed since the last call, re-asking wastes tokens. P&L is bucketed to
+        0.5% so ordinary jitter doesn't force a call; a real move does."""
+        held = []
+        for sym in sorted(self._held_symbols(portfolio)):
+            pos = portfolio.positions[sym]
+            last = portfolio.last_prices.get(sym, pos.avg_cost)
+            pnl_pct = (last / pos.avg_cost - 1.0) * 100 if pos.avg_cost > 0 else 0.0
+            held.append((sym, round(pnl_pct * 2) / 2))   # 0.5% buckets
+        buys = tuple(sorted(s.symbol for s in signals if s.action == "buy")[:5])
+        total_pnl = portfolio.realized_pnl + portfolio.unrealized_pnl()
+        target = getattr(settings, "target_profit", 0.0)
+        return (tuple(held), buys, total_pnl >= target > 0)
+
     def scan(self, settings: Settings, quotes: list, portfolio: Portfolio) -> tuple[list, list[OrderProposal]]:
         # Always run momentum for signal generation (cheap, no API call)
         signals, fallback_proposals = self._fallback.scan(settings, quotes, portfolio)
@@ -483,7 +566,17 @@ class AIStrategy:
             return signals, fallback_proposals
 
         now = time.time()
+        # Hard rate cap
         if now - self._last_call < self.THROTTLE_SECONDS:
+            return signals, fallback_proposals
+        # Nothing to decide → don't burn a call the AI would answer with []
+        if not self._actionable(signals, portfolio):
+            AI_STATUS.skipped_count += 1
+            return signals, fallback_proposals
+        # Same picture as last call and still within the heartbeat window → skip
+        fingerprint = self._decision_fingerprint(signals, portfolio, settings)
+        if fingerprint == self._last_fingerprint and now - self._last_call < self.HEARTBEAT_SECONDS:
+            AI_STATUS.skipped_count += 1
             return signals, fallback_proposals
 
         try:
@@ -493,12 +586,18 @@ class AIStrategy:
             original = self._strategy
             self._strategy = active_strategy
 
-            user_prompt = _build_prompt(signals, portfolio, settings)
+            # Send only what's actionable: buy candidates + the signals for held
+            # names. Sub-threshold WATCH rows can't be traded, so they'd only
+            # inflate the prompt.
+            held = self._held_symbols(portfolio)
+            decision_signals = [s for s in signals if s.action == "buy" or s.symbol in held][:12]
+            user_prompt = _build_prompt(decision_signals, portfolio, settings)
             self._strategy = original
 
             raw = _call_ai(self._provider, self._model, SYSTEM_PROMPT, user_prompt)
             proposals = self._parse_proposals(raw, quotes, portfolio, settings)
             self._last_call = now
+            self._last_fingerprint = fingerprint
             AI_STATUS.connected = True
             AI_STATUS.error = ""
             AI_STATUS.last_call_at = now
@@ -523,7 +622,16 @@ class AIStrategy:
         if start != -1 and end != -1:
             text = text[start:end + 1]
 
-        decisions = json.loads(text)
+        try:
+            decisions = json.loads(text)
+        except json.JSONDecodeError:
+            # A truncated response (e.g. the model ran out of output tokens
+            # mid-array) leaves an unterminated string / dangling object.
+            # Salvage every complete object up to the last balanced brace so
+            # one cut-off decision doesn't discard the whole batch.
+            decisions = _salvage_json_objects(text)
+            if not decisions:
+                raise ValueError("AI response was not valid JSON (using momentum fallback)")
         quote_map = {q.symbol: q for q in quotes}
         proposals: list[OrderProposal] = []
 

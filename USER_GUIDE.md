@@ -369,10 +369,31 @@ top, guarantees underneath.
 
 ### 9.5 Layer 3 — the AI brain, call by call
 
-**When it runs:** at most once per 30 seconds (hard throttle), only while a
-session is active, and only if a provider + key are configured. Between AI
-calls, ticks still run layers 1–2. One session ≈ 2 calls/minute worst case —
-with Gemini Flash or Claude Haiku that's cents per session.
+**When it runs:** the AI is only consulted when there is an actual decision to
+make. Each tick it is gated by three checks, in order:
+
+1. **Hard rate cap** — never more than once per `AI_MIN_INTERVAL_SECONDS`
+   (default 30s).
+2. **Actionable check** — skip entirely unless you either hold a position
+   (needs managing) or there's an affordable buy candidate. A flat account with
+   no buy signal gives the AI nothing to do, so no call is made.
+3. **Change check** — if the decision picture (held names + their P&L bucketed
+   to 0.5%, the top buy candidates, target-met flag) is identical to the last
+   call, skip — unless `AI_HEARTBEAT_SECONDS` (default 180s) has elapsed, which
+   forces a periodic re-evaluation while holding.
+
+The effect: an idle scan makes **zero** AI calls; an active session calls only
+on real state changes. This typically cuts token usage by 80–95% versus calling
+every tick. The `ai_status` panel shows `call_count` vs `skipped_count` so you
+can see it working. Only actionable signals (buy candidates + held names, ≤12)
+are sent in the prompt, not the full top-20 — smaller prompts, fewer tokens.
+
+Tune it in `.env`: raise `AI_MIN_INTERVAL_SECONDS` to call less often, raise
+`AI_HEARTBEAT_SECONDS` to re-evaluate held positions less frequently.
+
+**Safety:** skipping an AI call never removes risk protection — the mechanical
+exits (stop-loss / trailing-stop / profit-lock, layer 2) run every tick
+regardless of whether the AI was consulted.
 
 **What the AI receives** (rebuilt fresh every call):
 
