@@ -363,6 +363,13 @@ _benchmark_cache: dict[tuple, tuple[float, dict]] = {}
 BENCHMARK_CACHE_SECONDS = 300.0
 
 
+def _metric_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _window_start(window: str) -> datetime | None:
     """Start of the requested metrics window, or None for 'all'."""
     now = datetime.now(timezone.utc)
@@ -498,10 +505,9 @@ def metrics_report(window: str = "session") -> dict:
     if window not in ("session", "day", "week", "all"):
         window = "session"
     trades = _closed_trades(window)
-    report = compute_metrics(trades)
-    benchmark = _benchmark(window, trades)
-
-    net = report["net_pnl"]
+    # Starting equity is needed BEFORE the metrics: it is the basis for both
+    # the strategy return and the drawdown percentage.
+    net = sum(_metric_float(t.get("net_pnl")) for t in trades)
     if window == "session" and STATE.session_start_equity > 0:
         starting_equity = STATE.session_start_equity
         basis = "session start equity"
@@ -510,6 +516,9 @@ def metrics_report(window: str = "session") -> dict:
         # equity. Not exact when cash was added mid-window.
         starting_equity = STATE.paper_broker.portfolio().equity() - net
         basis = "current equity minus window P&L"
+
+    report = compute_metrics(trades, max(0.0, starting_equity))
+    benchmark = _benchmark(window, trades)
     strategy_return_pct = round(net / starting_equity * 100, 4) if starting_equity > 0 else 0.0
 
     start = _window_start(window)

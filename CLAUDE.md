@@ -11,8 +11,13 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 ```
 
 - Startup banner prints credential + connection status (Longbridge, AI provider).
-- `python3 -m unittest discover tests` — covers `metrics.py` only; everything
-  else is still verified by booting and hitting `/api/status`, `/api/tick`,
+- `python3 -m unittest discover tests` — covers `metrics.py` only.
+- `python3 -m trading_tool.replay` — replays real historical candles through
+  the real `TradingEngine` to verify the fill → ledger → metrics path without
+  a market being open. **Run this after any change to `execute()`, the
+  mechanical exits, proposal tagging, or the ledger.** Writes to a temp dir;
+  never touches `state/`.
+- Otherwise verify by booting and hitting `/api/status`, `/api/tick`,
   `/api/metrics`.
 - System python3 is 3.9 (code uses `from __future__ import annotations`).
 - macOS box: no `timeout` command; use background `&` + `sleep` + `pkill`.
@@ -29,6 +34,7 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 | `broker.py` | `PaperBroker` (local fills + fee/slippage model, real LB quotes when connected), `LongbridgeBroker` (quotes, candles, discovery, live orders), `.env` loader |
 | `models.py` | Dataclasses: Settings, Portfolio, Position (`peak_price` + round-trip entry context, `reset_round_trip()`), Quote (enriched: prev_close/high/low/volume/turnover), Signal, Diagnostics, OrderProposal (has `tag` → exit_reason) |
 | `market_hours.py` | US/HK/SG regular-session times (zoneinfo); `is_market_open`, `market_of`, `markets_status` |
+| `replay.py` | Dev harness: replays real candles through the real engine to prove the fill → ledger path works. `ReplayBroker` subclasses `PaperBroker` (fills/fees inherited unchanged), serves day-to-date quote context from bars. Not a backtest — judge the checks, not the P&L |
 | `metrics.py` | Pure functions over closed round trips: win rate, expectancy, profit factor, drawdown, fees, breakdowns by exit_reason/strategy. No I/O, no app imports — unit-tested in `tests/test_metrics.py` |
 | `state/` | JSON persistence: paper_state.json, trade_log.jsonl (per-fill), trades_closed.jsonl (per round trip), audit_log.jsonl (rotates at 5MB), sessions_log.jsonl |
 | `static/` | index.html + app.js (SSE client, render functions) + styles.css |
@@ -57,6 +63,14 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
   a candle API call). Falls back to ledger prices when Longbridge is down.
 - Live-mode records carry `fees_modelled: false` — the order API doesn't return
   commissions, so live net P&L is optimistic. Paper mode models fees fully.
+- `max_drawdown_pct` is measured against the **equity** curve
+  (`starting_equity + cumulative P&L`), so pass `starting_equity` into
+  `compute_metrics()` whenever it's known. Without it the percentage falls back
+  to peak cumulative *profit*, which is unbounded and can read >100%.
+- Replay gotcha: fetching history connects to Longbridge, which arms the
+  market-hours gate. Anything replaying historical bars must force
+  `LB_STATUS["connected"] = False` after building its broker or `tick()`
+  returns early on the "markets closed" branch and silently does nothing.
 
 ## Invariants — do not break
 

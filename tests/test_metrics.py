@@ -134,14 +134,31 @@ class MixedResultsTest(unittest.TestCase):
         self.assertAlmostEqual(m["expectancy_per_trade"], 9.0, places=3)
         self.assertEqual(m["net_pnl"], 45.0)
 
-    def test_max_drawdown(self):
+    def test_max_drawdown_without_equity_basis(self):
         m = compute_metrics(self.trades)
-        # The worst dollar decline and the worst percentage decline are
+        # No starting equity → percentage falls back to peak cumulative PROFIT.
+        # The worst dollar decline and the worst percentage decline are then
         # different events on this curve, and both are reported as-is:
         #   peak 20 → trough 10 = $10, but 50% of the peak
         #   peak 40 → trough 25 = $15, but only 37.5% of the peak
         self.assertEqual(m["max_drawdown_dollars"], 15.0)
         self.assertEqual(m["max_drawdown_pct"], 50.0)
+
+    def test_max_drawdown_against_equity(self):
+        # Equity curve from 1000: 1020, 1010, 1040, 1025, 1045.
+        # Worst decline is 1040 → 1025 = $15 = 1.44% of the peak.
+        m = compute_metrics(self.trades, starting_equity=1000.0)
+        self.assertEqual(m["max_drawdown_dollars"], 15.0)
+        self.assertAlmostEqual(m["max_drawdown_pct"], 1.4423, places=3)
+
+    def test_drawdown_pct_cannot_exceed_100_with_equity(self):
+        # Regression: dividing by peak PROFIT produced absurd readings — an
+        # $835 give-back against a peak profit near zero reported as 115%.
+        # Against equity the same run is a sane single-digit percentage.
+        wipeout = [trade(-100.0) for _ in range(5)]
+        m = compute_metrics([trade(50.0)] + wipeout, starting_equity=10_000.0)
+        self.assertLessEqual(m["max_drawdown_pct"], 100.0)
+        self.assertAlmostEqual(m["max_drawdown_pct"], 4.9751, places=3)
 
     def test_hold_times(self):
         m = compute_metrics(self.trades)

@@ -36,23 +36,28 @@ def _num(value, default: float = 0.0) -> float:
         return default
 
 
-def compute_metrics(trades: list[dict]) -> dict:
+def compute_metrics(trades: list[dict], starting_equity: float = 0.0) -> dict:
     """Full metric set for a list of closed trades, plus per-exit_reason and
-    per-strategy breakdowns."""
-    result = _core_metrics(trades)
-    result["by_exit_reason"] = _grouped(trades, "exit_reason", "unknown")
-    result["by_strategy"] = _grouped(trades, "strategy", "unknown")
+    per-strategy breakdowns.
+
+    `starting_equity` is only used for the drawdown percentage — see
+    `_max_drawdown`. Pass it whenever it is known; the numbers are far more
+    meaningful with it.
+    """
+    result = _core_metrics(trades, starting_equity)
+    result["by_exit_reason"] = _grouped(trades, "exit_reason", "unknown", starting_equity)
+    result["by_strategy"] = _grouped(trades, "strategy", "unknown", starting_equity)
     return result
 
 
-def _grouped(trades: list[dict], key: str, fallback: str) -> dict:
+def _grouped(trades: list[dict], key: str, fallback: str, starting_equity: float) -> dict:
     groups: dict[str, list[dict]] = {}
     for trade in trades:
         groups.setdefault(str(trade.get(key) or fallback), []).append(trade)
-    return {name: _core_metrics(items) for name, items in sorted(groups.items())}
+    return {name: _core_metrics(items, starting_equity) for name, items in sorted(groups.items())}
 
 
-def _core_metrics(trades: list[dict]) -> dict:
+def _core_metrics(trades: list[dict], starting_equity: float = 0.0) -> dict:
     total = len(trades)
     net_pnls = [_num(t.get("net_pnl")) for t in trades]
     fees = [_num(t.get("fees")) for t in trades]
@@ -79,7 +84,7 @@ def _core_metrics(trades: list[dict]) -> dict:
     total_gross = sum(gross_pnls)
     total_net = sum(net_pnls)
 
-    max_dd_dollars, max_dd_pct = _max_drawdown(net_pnls)
+    max_dd_dollars, max_dd_pct = _max_drawdown(net_pnls, starting_equity)
 
     return {
         "total_trades": total,
@@ -109,22 +114,27 @@ def _core_metrics(trades: list[dict]) -> dict:
     }
 
 
-def _max_drawdown(net_pnls: list[float]) -> tuple[float, float]:
-    """Largest peak-to-trough decline of the cumulative net-P&L curve.
+def _max_drawdown(net_pnls: list[float], starting_equity: float = 0.0) -> tuple[float, float]:
+    """Largest peak-to-trough decline, in dollars and percent.
 
-    Returns (dollars, percent). The percentage is measured against the running
-    peak of cumulative profit — with no positive peak yet there is no
-    meaningful denominator, so the percentage stays 0.0 while the dollar figure
-    is still reported.
+    With `starting_equity` known, this is drawdown in the conventional sense:
+    the decline measured against the running peak of the EQUITY curve
+    (`starting_equity + cumulative P&L`), which is bounded by 100%.
+
+    Without it, there is no equity basis, so the percentage falls back to the
+    decline against peak cumulative *profit*. That figure is unbounded and can
+    read above 100% — giving back $800 against a peak profit of $700 is
+    "114%" — so callers that can supply the equity should always do so.
     """
     cumulative = 0.0
-    peak = 0.0
+    peak = starting_equity          # 0.0 in the no-basis fallback
     max_dd = 0.0
     max_dd_pct = 0.0
     for pnl in net_pnls:
         cumulative += pnl
-        peak = max(peak, cumulative)
-        drawdown = peak - cumulative
+        equity = starting_equity + cumulative
+        peak = max(peak, equity)
+        drawdown = peak - equity
         if drawdown > max_dd:
             max_dd = drawdown
         if peak > 0:

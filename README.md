@@ -26,6 +26,14 @@ Unit tests (metrics only; the rest is verified by running the app):
 python3 -m unittest discover tests
 ```
 
+To check that the trade-recording path still works without waiting for a market to open, replay real historical candles through the real engine:
+
+```bash
+python3 -m trading_tool.replay
+```
+
+This places no orders and writes to a throwaway temp directory. It is not a backtest — its P&L means nothing; it exists to prove that fills, exit reasons, the round-trip ledger and the metrics all still line up. Worth running after any change to order execution or the exit rules.
+
 For full documentation — settings reference, safety ladders, how the strategy and AI brain actually decide — see [`USER_GUIDE.md`](USER_GUIDE.md).
 
 ## Live Trading Setup
