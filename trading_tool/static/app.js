@@ -422,6 +422,76 @@ function renderAuditLog() {
 }
 
 // ─────────────────────────────────────────────
+// Performance
+// ─────────────────────────────────────────────
+// Fetched on its own schedule rather than off the SSE state frame: metrics
+// only change when a round trip closes, and the benchmark costs candle calls.
+async function loadMetrics() {
+  const win = el("metricsWindow")?.value || "all";
+  try { renderMetrics(await api(`/api/metrics?window=${win}`)); } catch {}
+}
+
+function renderMetrics(report) {
+  const container = el("performance"); if (!container) return;
+  const m = report.metrics || {};
+  const bench = report.benchmark || {};
+
+  if (!m.total_trades) {
+    container.innerHTML = `<div class="empty-state">No closed trades in this window yet —
+      metrics appear once a position is opened and fully closed.</div>`;
+    return;
+  }
+
+  const cls = v => Number(v) > 0 ? "gain" : Number(v) < 0 ? "loss" : "";
+  const vsBench = Number(report.vs_benchmark_pct || 0);
+  // Only expectancy and vs-benchmark are colour-coded. Everything else stays
+  // neutral so the two numbers that decide "is this worth running" stand out.
+  const profitFactor = m.profit_factor_undefined ? "∞" : Number(m.profit_factor).toFixed(2);
+
+  const stat = (label, value, sub, klass = "") =>
+    `<div class="perf-stat">
+       <div class="perf-label">${label}</div>
+       <div class="perf-value ${klass}">${value}</div>
+       ${sub ? `<div class="perf-sub">${sub}</div>` : ""}
+     </div>`;
+
+  const warning = m.sample_warning
+    ? `<div class="perf-warning">⚠ Only ${m.total_trades} closed trade${m.total_trades === 1 ? "" : "s"} —
+        not yet meaningful. Treat every number here as noise until ~20 trades.</div>`
+    : "";
+
+  container.innerHTML = `
+    <div class="perf-grid">
+      ${stat("Expectancy per Trade", money(m.expectancy_per_trade),
+             "Average $ a trade is worth", cls(m.expectancy_per_trade))}
+      ${stat("Win Rate", `${(Number(m.win_rate) * 100).toFixed(1)}%`,
+             `${m.wins} won · ${m.losses} lost of ${m.total_trades}`)}
+      ${stat("Profit Factor", profitFactor,
+             m.profit_factor_undefined ? "No losing trades yet" : "Gross wins ÷ gross losses")}
+      ${stat("Max Drawdown", money(m.max_drawdown_dollars),
+             `${Number(m.max_drawdown_pct).toFixed(1)}% from peak`)}
+      ${stat("Fees as % of Gross", `${Number(m.fees_as_pct_of_gross).toFixed(1)}%`,
+             `${money(m.total_fees)} paid in fees`)}
+      ${stat("Strategy vs Buy-and-Hold", pctStr(vsBench),
+             `Strategy ${pctStr(report.strategy_return_pct)} · Hold ${pctStr(bench.return_pct)}`,
+             cls(vsBench))}
+    </div>
+    ${warning}
+    <div class="perf-foot">
+      Net P&L ${money(m.net_pnl)} · avg hold ${formatHold(m.avg_hold_seconds)} ·
+      benchmark: ${bench.source || "—"}${bench.symbols?.length ? ` (${bench.symbols.length} symbol${bench.symbols.length === 1 ? "" : "s"})` : ""} ·
+      return basis: ${report.return_basis || "—"}
+    </div>`;
+}
+
+function formatHold(seconds) {
+  const s = Number(seconds || 0);
+  if (s < 60) return `${s.toFixed(0)}s`;
+  if (s < 3600) return `${(s / 60).toFixed(1)}m`;
+  return `${(s / 3600).toFixed(1)}h`;
+}
+
+// ─────────────────────────────────────────────
 // Sessions
 // ─────────────────────────────────────────────
 async function loadSessions() {
@@ -534,7 +604,7 @@ el("endSessionBtn").addEventListener("click", async () => {
   })}));
 });
 
-el("tickButton").addEventListener("click",   async () => render(await api("/api/tick")));
+el("tickButton").addEventListener("click",   async () => { render(await api("/api/tick")); loadMetrics(); });
 el("pauseButton").addEventListener("click",  async () => {
   render(await api(state.tick_paused ? "/api/tick/resume" : "/api/tick/pause", { method: "POST" }));
 });
@@ -667,3 +737,10 @@ function connectStream() {
 }
 
 connectStream();
+
+// Performance card: on load, on demand, and on a slow timer. Deliberately not
+// tied to the SSE state frame — closed-trade metrics only move when a round
+// trip completes, and the benchmark costs candle API calls.
+el("metricsWindow")?.addEventListener("change", loadMetrics);
+loadMetrics();
+setInterval(loadMetrics, 60000);

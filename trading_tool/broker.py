@@ -200,6 +200,14 @@ class PaperBroker:
             position.avg_cost = ((position.quantity * position.avg_cost) + notional) / new_quantity
             position.quantity = new_quantity
             position.peak_price = max(position.peak_price, price)
+            # Round-trip accounting: entry_price mirrors avg_cost but is keyed
+            # off entry_qty so it survives the position going flat.
+            new_entry_qty = round(position.entry_qty + quantity, 6)
+            position.entry_price = ((position.entry_qty * position.entry_price) + notional) / new_entry_qty
+            position.entry_qty = new_entry_qty
+            position.fees_paid = round(position.fees_paid + fee, 6)
+            if not position.opened_at:
+                position.opened_at = datetime.now(timezone.utc).isoformat()
             self._portfolio.cash -= notional + fee
             self._portfolio.realized_pnl -= fee
         else:
@@ -211,11 +219,17 @@ class PaperBroker:
             notional = round(price * quantity, 6)
             self._portfolio.cash += notional - fee
             self._portfolio.realized_pnl += quantity * (price - position.avg_cost) - fee
+            position.exit_qty = round(position.exit_qty + quantity, 6)
+            position.exit_proceeds = round(position.exit_proceeds + notional, 6)
+            position.fees_paid = round(position.fees_paid + fee, 6)
             position.quantity = round(position.quantity - quantity, 6)
             if position.quantity < 1e-9:
                 position.quantity = 0.0
                 position.avg_cost = 0.0
                 position.peak_price = 0.0
+                # Entry context is deliberately NOT cleared here — the engine
+                # reads it right after this call to emit the round-trip record,
+                # then calls Position.reset_round_trip().
 
         proposal.price = round(price, 2)
         proposal.quantity = quantity
@@ -236,8 +250,18 @@ class PaperBroker:
                 "cash": self._portfolio.cash,
                 "realized_pnl": self._portfolio.realized_pnl,
                 "positions": {
-                    symbol: {"symbol": pos.symbol, "quantity": pos.quantity,
-                             "avg_cost": pos.avg_cost, "peak_price": pos.peak_price}
+                    symbol: {
+                        "symbol": pos.symbol, "quantity": pos.quantity,
+                        "avg_cost": pos.avg_cost, "peak_price": pos.peak_price,
+                        # Entry context must round-trip through disk, or a
+                        # restart mid-position loses the trade record.
+                        "opened_at": pos.opened_at, "entry_price": pos.entry_price,
+                        "entry_qty": pos.entry_qty, "entry_score": pos.entry_score,
+                        "entry_strategy": pos.entry_strategy, "entry_mode": pos.entry_mode,
+                        "entry_diagnostics": pos.entry_diagnostics,
+                        "fees_paid": pos.fees_paid, "exit_qty": pos.exit_qty,
+                        "exit_proceeds": pos.exit_proceeds,
+                    }
                     for symbol, pos in self._portfolio.positions.items()
                 },
                 "last_prices": {s: p for s, p in self._portfolio.last_prices.items() if s in held},
@@ -388,8 +412,11 @@ class LongbridgeBroker:
         return result
 
     def candles(self, symbol: str, period: str = "Min_1", count: int = 120) -> list[dict]:
-        """Recent candlesticks as [{close, high, low, volume, turnover}, ...],
-        oldest first. Returns [] when the SDK version has no candlestick API."""
+        """Recent candlesticks as [{close, high, low, volume, turnover, timestamp}, ...],
+        oldest first. Returns [] when the SDK version has no candlestick API.
+
+        `timestamp` is an ISO string (or "" when the SDK omits it) — the
+        benchmark needs it to align bars to a metrics window."""
         if self.Period is None:
             return []
         p = getattr(self.Period, period, None)
@@ -404,10 +431,16 @@ class LongbridgeBroker:
                     return float(getattr(b, attr, 0) or 0)
                 except (TypeError, ValueError):
                     return 0.0
+            raw_ts = getattr(b, "timestamp", None)
+            try:
+                stamp = raw_ts.isoformat() if hasattr(raw_ts, "isoformat") else (str(raw_ts) if raw_ts else "")
+            except Exception:
+                stamp = ""
             out.append({
                 "close": num("close"), "open": num("open"),
                 "high": num("high"), "low": num("low"),
                 "volume": num("volume"), "turnover": num("turnover"),
+                "timestamp": stamp,
             })
         return out
 
@@ -642,8 +675,24 @@ class LongbridgeBroker:
                     qty = float(getattr(pos, "quantity", 0) or 0)
                     cost_price = float(getattr(pos, "cost_price", 0) or 0)
                     if symbol and qty > 0:
-                        synced[symbol] = Position(symbol=symbol, quantity=qty, avg_cost=cost_price)
+                        # Merge, don't replace: a plain overwrite would wipe the
+                        # round-trip entry context (opened_at, entry_price,
+                        # score, fees) on every sync, so live trades could never
+                        # be closed out into the ledger.
+                        existing = self._portfolio.positions.get(symbol)
+                        if existing is not None:
+                            existing.quantity = qty
+                            existing.avg_cost = cost_price
+                            synced[symbol] = existing
+                        else:
+                            synced[symbol] = Position(symbol=symbol, quantity=qty, avg_cost=cost_price)
             if synced:
+                # Keep flat-but-unlogged positions around so the engine can
+                # still emit their closed-trade record on the next pass.
+                for symbol, pos in self._portfolio.positions.items():
+                    if symbol not in synced and pos.entry_qty > 0:
+                        pos.quantity = 0.0
+                        synced[symbol] = pos
                 self._portfolio.positions = synced
         except Exception:
             pass

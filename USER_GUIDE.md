@@ -146,6 +146,7 @@ thinks are covered in depth in section 9 — Deep Dive.)*
 3. Keep **Approval = Manual** for your first sessions
 4. Click **▶ Start Session** — scanning begins on the interval you set
 5. Watch:
+   - **Performance** — is the strategy actually working (see section 5.1)
    - **Positions** — what you own, what you paid, current P&L
    - **Trade Proposals** — what the AI wants to do and why (approve/reject)
    - **AI Ranking** — how each symbol scores right now
@@ -153,6 +154,42 @@ thinks are covered in depth in section 9 — Deep Dive.)*
 6. Click **■ End Session** — the session P&L is recorded in Session History
    (positions stay open unless "stop at end" sold them)
 7. **Reset Paper Account** wipes the paper portfolio back to your budget
+
+### 5.1 The Performance card — is this strategy making money?
+
+Session P&L alone can't tell you whether a strategy works; a single lucky trade
+hides a losing system. The Performance card measures **closed round trips**
+(a position opened and then fully closed), not individual fills. A position you
+are still holding contributes nothing until you exit it.
+
+Pick a window — this session, last 24 hours, last 7 days, or all time — and you
+get six numbers:
+
+| Number | What it means | What to do about it |
+|---|---|---|
+| **Expectancy per Trade** | The average dollars a trade is worth: `(win rate × avg win) − (loss rate × avg loss)`. **This is the headline number.** | If it is negative, the strategy loses money by design. Nothing else on the card matters until it is positive. |
+| **Win Rate** | Share of closed trades that made money after fees. | A low win rate is fine *if* the wins are much bigger than the losses — check it against expectancy, never alone. |
+| **Profit Factor** | Gross wins ÷ gross losses. Above 1.0 means the winners outweigh the losers. Shows **∞** when there are no losing trades yet. | Below 1.0 pairs with negative expectancy — stop and re-tune. |
+| **Max Drawdown** | Largest peak-to-trough fall of cumulative profit, in dollars and as a % of the peak. | This is the pain you must be willing to sit through. If it exceeds your comfort, cut Max Trade Value. |
+| **Fees as % of Gross** | How much of the gross profit the $1 fee + slippage model ate. | High-turnover styles (scalp) can spend most of the edge here. If this is large, trade less often or in bigger size. |
+| **Strategy vs Buy-and-Hold** | Strategy return minus an equal-weight buy-and-hold of the *same symbols over the same window*, priced from real Longbridge candles. | **If this is negative you would have made more money doing nothing.** That is the real bar to beat. |
+
+Only expectancy and vs-benchmark are colour-coded, because those are the two
+that decide whether the tool is worth running.
+
+**Small samples lie.** Under 20 closed trades the card shows a visible warning
+banner. Ten trades tell you almost nothing about a strategy — resist tuning
+against them.
+
+Every closed round trip is also appended to `state/trades_closed.jsonl` with its
+`exit_reason` (`profit_lock`, `stop_loss`, `trailing_stop`, `ai_sell`,
+`strategy_sell`, `session_end`, `manual`), the signal score and indicator
+readings at entry. `exit_reason` is the highest-value field there: it is what
+tells you whether your stop loss is protecting you or bleeding you.
+
+The same data is available at `GET /api/metrics?window=session|day|week|all`,
+which additionally returns the metrics broken down by exit reason and by AI
+strategy style.
 
 ---
 
@@ -213,7 +250,18 @@ thinks are covered in depth in section 9 — Deep Dive.)*
    limited to 3 day trades per 5 business days (PDT rule). Cash accounts avoid
    PDT but funds from sales settle T+1 before reuse.
 4. **No overnight risk handling** — keep "stop at end" on so sessions end flat.
-5. **AI ≠ profit.** Research on LLM trading agents shows most do not reliably
+5. **Performance metrics count closed round trips only.** Open positions are
+   invisible to the card, so a window where you bought and held shows no
+   trades. In **live** mode the broker's real commissions are not returned by
+   the order API, so live records model **zero fees** (`fees_modelled: false`
+   in the ledger) — live net P&L is therefore optimistic. Paper mode models
+   the $1 + 0.05% friction fully.
+6. **The benchmark is a fair-but-rough comparison.** It equal-weights buy-and-hold
+   of up to 10 symbols you actually traded, priced from real candles over the
+   same window. It ignores position sizing and the order you entered in, so
+   treat a small gap either way as noise — a large, persistent negative gap is
+   the signal that matters.
+7. **AI ≠ profit.** Research on LLM trading agents shows most do not reliably
    beat buy-and-hold. Treat this tool as a disciplined execution assistant with
    hard safety rails, not a money printer. Trade only what you can afford to lose.
 

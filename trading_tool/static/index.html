@@ -171,6 +171,25 @@
           <div class="acct-stat"><div class="acct-label">Session Started</div><div class="acct-value" id="sessionStart" style="font-size:14px">—</div></div>
         </section>
 
+        <!-- Performance — is the strategy actually working? -->
+        <section class="card">
+          <div class="card-header">
+            <h2>Performance</h2>
+            <div class="perf-controls">
+              <select id="metricsWindow" class="perf-window">
+                <option value="session">This session</option>
+                <option value="day">Last 24 hours</option>
+                <option value="week">Last 7 days</option>
+                <option value="all" selected>All time</option>
+              </select>
+              <span class="hint-inline">Closed round trips only</span>
+            </div>
+          </div>
+          <div id="performance" class="card-body">
+            <div class="empty-state">No closed trades yet</div>
+          </div>
+        </section>
+
         <!-- Positions — always visible -->
         <section class="card">
           <div class="card-header">

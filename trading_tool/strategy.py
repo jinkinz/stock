@@ -265,6 +265,7 @@ class MomentumStrategy:
                     price=signal.price,
                     confidence=signal.score,
                     reason=signal.reason,
+                    tag="strategy_sell",
                 ))
                 continue
 

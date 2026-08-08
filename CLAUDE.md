@@ -11,7 +11,9 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 ```
 
 - Startup banner prints credential + connection status (Longbridge, AI provider).
-- No test suite. Verify by booting and hitting `/api/status`, `/api/tick`.
+- `python3 -m unittest discover tests` — covers `metrics.py` only; everything
+  else is still verified by booting and hitting `/api/status`, `/api/tick`,
+  `/api/metrics`.
 - System python3 is 3.9 (code uses `from __future__ import annotations`).
 - macOS box: no `timeout` command; use background `&` + `sleep` + `pkill`.
 - Check for an already-running instance before starting one (port 8765);
@@ -21,13 +23,14 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 
 | File | Role |
 |---|---|
-| `app.py` | HTTP server, SSE, `TradingEngine` (tick pipeline, mechanical exits, candle enrichment, universe ranking, backtest), `AppState` persistence |
+| `app.py` | HTTP server, SSE, `TradingEngine` (tick pipeline, mechanical exits, candle enrichment, universe ranking, backtest, round-trip ledger), `metrics_report()` + buy-and-hold benchmark, `AppState` persistence |
 | `strategy.py` | `MomentumStrategy` — signal engine: multi-factor scoring (day change, range position, VWAP, EMA9/21, RSI(14), turnover liquidity gate) + `compute_indicators()` |
 | `ai_strategy.py` | `AIStrategy` — multi-provider LLM wrapper (anthropic/openai/gemini/openrouter/ollama/custom), 30s throttle, prompt builder, response sanitizer, falls back to MomentumStrategy on any failure |
 | `broker.py` | `PaperBroker` (local fills + fee/slippage model, real LB quotes when connected), `LongbridgeBroker` (quotes, candles, discovery, live orders), `.env` loader |
-| `models.py` | Dataclasses: Settings, Portfolio, Position (has `peak_price`), Quote (enriched: prev_close/high/low/volume/turnover), Signal, Diagnostics, OrderProposal |
+| `models.py` | Dataclasses: Settings, Portfolio, Position (`peak_price` + round-trip entry context, `reset_round_trip()`), Quote (enriched: prev_close/high/low/volume/turnover), Signal, Diagnostics, OrderProposal (has `tag` → exit_reason) |
 | `market_hours.py` | US/HK/SG regular-session times (zoneinfo); `is_market_open`, `market_of`, `markets_status` |
-| `state/` | JSON persistence: paper_state.json, trade_log.jsonl, audit_log.jsonl (rotates at 5MB), sessions_log.jsonl |
+| `metrics.py` | Pure functions over closed round trips: win rate, expectancy, profit factor, drawdown, fees, breakdowns by exit_reason/strategy. No I/O, no app imports — unit-tested in `tests/test_metrics.py` |
+| `state/` | JSON persistence: paper_state.json, trade_log.jsonl (per-fill), trades_closed.jsonl (per round trip), audit_log.jsonl (rotates at 5MB), sessions_log.jsonl |
 | `static/` | index.html + app.js (SSE client, render functions) + styles.css |
 
 ## Decision layers (order matters)
@@ -39,6 +42,21 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
    The AI can exit earlier but never hold past these.
 3. **AI brain** (≤1 call/30s) returns JSON decisions; sanitizer caps SELL at
    held qty, BUY at min(max_trade_value, 35% cash), max 5 proposals.
+
+## Measurement layer
+
+- A **trade** is a round trip (entry fill(s) → exit fill(s)), not a fill.
+  `trade_log.jsonl` records fills; `trades_closed.jsonl` records round trips and
+  is the only input to metrics.
+- `GET /api/metrics?window=session|day|week|all` → `metrics_report()`:
+  expectancy (the headline number), win rate, profit factor, drawdown, fees as
+  % of gross, plus strategy-vs-buy-and-hold. `sample_warning` is set under 20
+  trades and the UI must show it, not hide it in a tooltip.
+- The benchmark equal-weights buy-and-hold of the traded symbols over the same
+  window from real candles — capped at 10 symbols, cached 5 min (each symbol is
+  a candle API call). Falls back to ledger prices when Longbridge is down.
+- Live-mode records carry `fees_modelled: false` — the order API doesn't return
+  commissions, so live net P&L is optimistic. Paper mode models fees fully.
 
 ## Invariants — do not break
 
@@ -59,6 +77,12 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
   symbols and this previously caused 27MB logs and multi-MB SSE payloads.
 - The 10s quote-refresh loop and any display-only path must use
   `scan_signals_only()` — never the AI (burns paid tokens for nothing).
+- Round-trip ledger: `Position` carries entry context (`entry_price`,
+  `entry_qty`, `opened_at`, `fees_paid`, `exit_*`) that the broker must NOT
+  clear when a position goes flat — `TradingEngine._record_round_trip()` reads
+  it one call later, writes `trades_closed.jsonl`, then calls
+  `reset_round_trip()`. `exit_reason` comes from `OrderProposal.tag`; never
+  parse the free-text `reason`. New sell sites must set a tag.
 
 ## Environment
 
@@ -73,6 +97,11 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 
 ## Docs
 
-- `USER_GUIDE.md` — full user documentation incl. deep-dive on strategy/AI
-  internals (section 9). Keep it in sync when changing strategy logic,
-  settings, or safety rules.
+- `USER_GUIDE.md` — full user documentation incl. the Performance card
+  (section 5.1) and a deep-dive on strategy/AI internals (section 9). Keep it
+  in sync when changing strategy logic, settings, metrics, or safety rules.
+- `README.md` — short orientation: run, credentials, safety model, roadmap.
+  Update the roadmap when a listed item ships.
+- `NEXT_SPEC.md` — the risk & measurement work plan. Phase 1 (trade ledger +
+  metrics) is **done**; Phases 2 (ATR position sizing) and 3 (portfolio
+  protections) are not started. `tests/test_sizing.py` belongs to Phase 2.

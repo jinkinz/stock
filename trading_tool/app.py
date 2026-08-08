@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .broker import LongbridgeBroker, PaperBroker
 from .models import (
@@ -26,6 +26,7 @@ from .models import (
 )
 from .ai_strategy import AI_STATUS, AIStrategy
 from .market_hours import market_of, markets_status, open_markets
+from .metrics import compute_metrics, equal_weight_return
 from .strategy import MomentumStrategy, PROPOSAL_TTL_SECONDS
 
 ROOT = Path(__file__).resolve().parent
@@ -33,6 +34,9 @@ STATIC = ROOT / "static"
 STATE_DIR = ROOT / "state"
 STATE_FILE = STATE_DIR / "paper_state.json"
 TRADE_LOG = STATE_DIR / "trade_log.jsonl"
+# One line per completed round trip (entry fill(s) → exit fill(s)), unlike
+# TRADE_LOG which records individual fills. This is what /api/metrics reads.
+TRADES_CLOSED_LOG = STATE_DIR / "trades_closed.jsonl"
 AUDIT_LOG = STATE_DIR / "audit_log.jsonl"
 BACKTEST_LOG = STATE_DIR / "backtest_log.jsonl"
 SESSIONS_LOG = STATE_DIR / "sessions_log.jsonl"
@@ -117,6 +121,18 @@ class AppState:
                     quantity=float(pos.get("quantity", 0)),
                     avg_cost=float(pos.get("avg_cost", 0)),
                     peak_price=float(pos.get("peak_price", 0)),
+                    # Round-trip context — absent in states written before the
+                    # trade ledger existed, hence the defaults.
+                    opened_at=pos.get("opened_at", ""),
+                    entry_price=float(pos.get("entry_price", 0)),
+                    entry_qty=float(pos.get("entry_qty", 0)),
+                    entry_score=float(pos.get("entry_score", 0)),
+                    entry_strategy=pos.get("entry_strategy", ""),
+                    entry_mode=pos.get("entry_mode", ""),
+                    entry_diagnostics=pos.get("entry_diagnostics") or {},
+                    fees_paid=float(pos.get("fees_paid", 0)),
+                    exit_qty=float(pos.get("exit_qty", 0)),
+                    exit_proceeds=float(pos.get("exit_proceeds", 0)),
                 )
                 for symbol, pos in portfolio_data.get("positions", {}).items()
             }
@@ -224,6 +240,11 @@ class AppState:
         with TRADE_LOG.open("a") as handle:
             handle.write(json.dumps(record) + "\n")
 
+    def log_closed_trade(self, record: dict) -> None:
+        STATE_DIR.mkdir(exist_ok=True)
+        with TRADES_CLOSED_LOG.open("a") as handle:
+            handle.write(json.dumps(record) + "\n")
+
     def _proposal_from_json(self, item: dict) -> OrderProposal:
         return OrderProposal(
             symbol=item["symbol"],
@@ -232,6 +253,7 @@ class AppState:
             price=float(item["price"]),
             reason=item.get("reason", "Restored proposal."),
             confidence=float(item.get("confidence", 0.0)),
+            tag=item.get("tag", ""),
             id=item.get("id"),
             status=OrderStatus(item.get("status", "proposed")),
             created_at=item.get("created_at", datetime.now(timezone.utc).isoformat()),
@@ -325,6 +347,182 @@ def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float | Non
     with BACKTEST_LOG.open("a") as f:
         f.write(json.dumps(result) + "\n")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Metrics + buy-and-hold benchmark
+# ---------------------------------------------------------------------------
+
+# How many closed trades /api/metrics reads at most. Bounded on purpose — the
+# ledger is append-only and grows for the life of the account.
+MAX_LEDGER_READ = 5000
+# Symbols priced for the benchmark. Each costs one candle API call, so this is
+# capped exactly like _fetch_backtest_history.
+BENCHMARK_MAX_SYMBOLS = 10
+_benchmark_cache: dict[tuple, tuple[float, dict]] = {}
+BENCHMARK_CACHE_SECONDS = 300.0
+
+
+def _window_start(window: str) -> datetime | None:
+    """Start of the requested metrics window, or None for 'all'."""
+    now = datetime.now(timezone.utc)
+    if window == "session":
+        if STATE.session_start_at is None:
+            return now      # no session running → empty window
+        try:
+            return datetime.fromisoformat(STATE.session_start_at)
+        except ValueError:
+            return None
+    if window == "day":
+        return now - timedelta(days=1)
+    if window == "week":
+        return now - timedelta(days=7)
+    return None
+
+
+def _closed_trades(window: str) -> list[dict]:
+    """Closed trades within the window, oldest first."""
+    start = _window_start(window)
+    trades: list[dict] = []
+    for line in _tail_lines(TRADES_CLOSED_LOG, MAX_LEDGER_READ):
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if start is not None:
+            try:
+                if datetime.fromisoformat(record.get("closed_at", "")) < start:
+                    continue
+            except ValueError:
+                continue
+        trades.append(record)
+    return trades
+
+
+def _benchmark(window: str, trades: list[dict]) -> dict:
+    """Equal-weight buy-and-hold return (%) for the symbols actually traded in
+    the window, over the same period. Cached — the UI polls this endpoint."""
+    symbols = list(dict.fromkeys(t.get("symbol", "") for t in trades if t.get("symbol")))
+    if not symbols:
+        return {"return_pct": 0.0, "symbols": [], "source": "no trades in window"}
+    symbols = symbols[:BENCHMARK_MAX_SYMBOLS]
+
+    key = (window, tuple(symbols))
+    cached = _benchmark_cache.get(key)
+    if cached and (time.monotonic() - cached[0]) < BENCHMARK_CACHE_SECONDS:
+        return cached[1]
+
+    start = _window_start(window)
+    if start is None:
+        # "all" — anchor on the earliest entry we have a record of
+        stamps = [t.get("opened_at", "") for t in trades if t.get("opened_at")]
+        if stamps:
+            try:
+                start = datetime.fromisoformat(min(stamps))
+            except ValueError:
+                start = None
+    span_days = (datetime.now(timezone.utc) - start).total_seconds() / 86400 if start else 1.0
+    period = "Day" if span_days > 5 else "Min_5"
+    bars_needed = int(span_days * 24 * 12) + 5 if period == "Min_5" else int(span_days) + 5
+
+    returns: dict[str, float] = {}
+    for symbol in symbols:
+        try:
+            candles = STATE.paper_broker.candles(symbol, period=period,
+                                                 count=max(20, min(1000, bars_needed)))
+        except Exception:
+            candles = []
+        bars = [c for c in candles if c.get("close", 0) > 0]
+        if len(bars) < 2:
+            continue
+        first = _first_bar_in_window(bars, start)
+        if first["close"] > 0:
+            returns[symbol] = (bars[-1]["close"] / first["close"] - 1.0) * 100
+
+    if returns:
+        result = {
+            "return_pct": equal_weight_return(returns),
+            "symbols": sorted(returns.keys()),
+            "source": f"longbridge {period} candles",
+        }
+    else:
+        # No candle data (sim mode, or Longbridge disconnected). Fall back to
+        # what the ledger already knows: hold each symbol from its first entry
+        # price to the latest price we have seen.
+        result = _benchmark_from_ledger(trades, symbols)
+
+    _benchmark_cache[key] = (time.monotonic(), result)
+    return result
+
+
+def _first_bar_in_window(bars: list[dict], start: datetime | None) -> dict:
+    """First bar at/after `start`. Falls back to the oldest bar when the SDK
+    gave us no timestamps — count-based selection already bounded the fetch."""
+    if start is None:
+        return bars[0]
+    for bar in bars:
+        stamp = bar.get("timestamp") or ""
+        if not stamp:
+            break
+        try:
+            when = datetime.fromisoformat(stamp)
+        except ValueError:
+            break
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        if when >= start:
+            return bar
+    return bars[0]
+
+
+def _benchmark_from_ledger(trades: list[dict], symbols: list[str]) -> dict:
+    """Candle-free fallback: equal-weight hold from each symbol's first entry
+    price in the window to its latest known price."""
+    last_prices = STATE.paper_broker.portfolio().last_prices
+    returns: dict[str, float] = {}
+    for symbol in symbols:
+        entries = [t for t in trades if t.get("symbol") == symbol]
+        entry_price = float(entries[0].get("entry_price", 0) or 0) if entries else 0.0
+        current = float(last_prices.get(symbol, 0) or 0) or float(entries[-1].get("exit_price", 0) or 0)
+        if entry_price > 0 and current > 0:
+            returns[symbol] = (current / entry_price - 1.0) * 100
+    return {
+        "return_pct": equal_weight_return(returns),
+        "symbols": sorted(returns.keys()),
+        "source": "ledger prices (no candle data available)",
+    }
+
+
+def metrics_report(window: str = "session") -> dict:
+    """Everything /api/metrics returns: metrics, benchmark, strategy return."""
+    if window not in ("session", "day", "week", "all"):
+        window = "session"
+    trades = _closed_trades(window)
+    report = compute_metrics(trades)
+    benchmark = _benchmark(window, trades)
+
+    net = report["net_pnl"]
+    if window == "session" and STATE.session_start_equity > 0:
+        starting_equity = STATE.session_start_equity
+        basis = "session start equity"
+    else:
+        # Best available proxy: back the window's realised P&L out of current
+        # equity. Not exact when cash was added mid-window.
+        starting_equity = STATE.paper_broker.portfolio().equity() - net
+        basis = "current equity minus window P&L"
+    strategy_return_pct = round(net / starting_equity * 100, 4) if starting_equity > 0 else 0.0
+
+    start = _window_start(window)
+    return {
+        "window": window,
+        "window_start": start.isoformat() if start else None,
+        "metrics": report,
+        "benchmark": benchmark,
+        "strategy_return_pct": strategy_return_pct,
+        "vs_benchmark_pct": round(strategy_return_pct - benchmark["return_pct"], 4),
+        "return_basis": basis,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 class TradingEngine:
@@ -569,6 +767,7 @@ class TradingEngine:
             proposal.status = OrderStatus.FAILED
             proposal.error = str(exc)
         if proposal.status is OrderStatus.FILLED:
+            self._record_round_trip(proposal)
             event = AuditEventType.FILL
         elif proposal.status is OrderStatus.APPROVED:
             event = AuditEventType.PROPOSAL   # live order pending on exchange
@@ -577,6 +776,106 @@ class TradingEngine:
         STATE.audit(event, symbol=proposal.symbol, side=proposal.side.value, quantity=round(proposal.quantity, 6), price=proposal.price, error=proposal.error)
         if STATE.settings.trading_mode is TradingMode.PAPER:
             STATE.log_trade(proposal)
+
+    # ── Round-trip ledger ────────────────────────────────────────────────
+    # A "trade" is a round trip: entry fill(s) → exit fill(s) for one symbol.
+    # trade_log.jsonl records individual fills and cannot answer "did that
+    # trade make money"; trades_closed.jsonl can.
+
+    def _entry_diagnostics(self, symbol: str) -> tuple[float, dict]:
+        """(score, diagnostics subset) from the current scan for this symbol.
+        Only the five fields worth correlating against outcomes — never the
+        whole Diagnostics object, and never anything universe-sized."""
+        signal = next((s for s in STATE.signals if s.symbol == symbol), None)
+        if signal is None:
+            return 0.0, {}
+        diag = signal.diagnostics
+        if diag is None:
+            return signal.score, {}
+        return signal.score, {
+            "rsi": diag.rsi,
+            "vwap_dist_pct": diag.vwap_dist_pct,
+            "ema_trend": diag.ema_trend,
+            "vol_surge": diag.vol_surge,
+            "day_change_pct": diag.day_change_pct,
+        }
+
+    def _record_round_trip(self, proposal: OrderProposal) -> None:
+        """Called after every confirmed fill. Stamps entry context on a BUY,
+        and on the SELL that takes the position flat emits one closed-trade
+        record. Partial exits just accumulate on the Position."""
+        try:
+            position = STATE.broker().portfolio().positions.get(proposal.symbol)
+            if position is None:
+                return
+            mode = STATE.settings.trading_mode.value
+
+            if proposal.side is Side.BUY:
+                if not position.entry_strategy:
+                    score, diag = self._entry_diagnostics(proposal.symbol)
+                    position.entry_score = score if score else proposal.confidence
+                    position.entry_diagnostics = diag
+                    position.entry_strategy = STATE.settings.ai_strategy_name
+                    position.entry_mode = mode
+                if not position.opened_at:
+                    # Live fills don't run through PaperBroker's accounting, so
+                    # the entry figures are reconstructed from the proposal.
+                    position.opened_at = datetime.now(timezone.utc).isoformat()
+                if position.entry_qty <= 0:
+                    position.entry_qty = proposal.quantity
+                    position.entry_price = proposal.price
+                return
+
+            # ── SELL ──────────────────────────────────────────────────────
+            if mode != TradingMode.PAPER.value:
+                # Live sells never touched PaperBroker's accumulators.
+                position.exit_qty = round(position.exit_qty + proposal.quantity, 6)
+                position.exit_proceeds = round(
+                    position.exit_proceeds + proposal.quantity * proposal.price, 6)
+            if position.quantity > 1e-9 or position.entry_qty <= 0:
+                return   # partial exit, or nothing was ever recorded as opened
+
+            entry_notional = position.entry_price * position.entry_qty
+            gross_pnl = position.exit_proceeds - entry_notional
+            fees = position.fees_paid
+            hold_seconds = 0.0
+            if position.opened_at:
+                try:
+                    opened = datetime.fromisoformat(position.opened_at)
+                    hold_seconds = round(
+                        (datetime.now(timezone.utc) - opened).total_seconds(), 2)
+                except ValueError:
+                    hold_seconds = 0.0
+            exit_price = (position.exit_proceeds / position.exit_qty
+                          if position.exit_qty > 0 else proposal.price)
+            record = {
+                "symbol": proposal.symbol,
+                "opened_at": position.opened_at,
+                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "hold_seconds": hold_seconds,
+                "entry_price": round(position.entry_price, 6),
+                "exit_price": round(exit_price, 6),
+                "quantity": round(position.entry_qty, 6),
+                "gross_pnl": round(gross_pnl, 6),
+                "fees": round(fees, 6),
+                "net_pnl": round(gross_pnl - fees, 6),
+                "return_pct": round(gross_pnl / entry_notional * 100, 6) if entry_notional else 0.0,
+                "exit_reason": proposal.tag or "manual",
+                "strategy": position.entry_strategy or STATE.settings.ai_strategy_name,
+                "mode": position.entry_mode or mode,
+                "entry_score": round(position.entry_score, 4),
+                "entry_diagnostics": position.entry_diagnostics,
+                # Live fees are charged by the broker and not returned by the
+                # order API, so live records model zero fees. Never read a live
+                # net_pnl as if it were fee-inclusive.
+                "fees_modelled": position.entry_mode == TradingMode.PAPER.value,
+            }
+            STATE.log_closed_trade(record)
+            position.reset_round_trip()
+        except Exception as exc:
+            # The ledger must never be able to break order execution.
+            STATE.audit(AuditEventType.FAIL, symbol=proposal.symbol,
+                        error=f"closed-trade record failed: {exc}")
 
     def _expire_stale_proposals(self) -> None:
         """In manual mode, auto-expire proposals older than PROPOSAL_TTL_SECONDS."""
@@ -704,7 +1003,8 @@ class TradingEngine:
                 continue
             quote = latest[symbol]
             proposal = OrderProposal(symbol=quote.symbol, side=Side.SELL, quantity=position.quantity,
-                                     price=quote.price, confidence=1.0, reason="Trading duration ended — stop-at-end enabled.")
+                                     price=quote.price, confidence=1.0, tag="session_end",
+                                     reason="Trading duration ended — stop-at-end enabled.")
             STATE.proposals.append(proposal)
             if STATE.settings.approval_mode is ApprovalMode.AUTO:
                 self.execute(proposal)
@@ -769,19 +1069,23 @@ class TradingEngine:
                 continue
             gain_pct = (quote.price / position.avg_cost - 1.0) * 100
             reason = None
+            tag = ""
             if lock_pct > 0 and gain_pct >= lock_pct:
                 reason = f"Profit lock: +{gain_pct:.2f}% ≥ {lock_pct:.2f}% threshold."
+                tag = "profit_lock"
             elif stop_pct > 0 and gain_pct <= -stop_pct:
                 reason = f"STOP LOSS: {gain_pct:.2f}% ≤ -{stop_pct:.2f}% threshold."
+                tag = "stop_loss"
             elif trail_pct > 0 and position.peak_price > position.avg_cost:
                 drop_from_peak = (1.0 - quote.price / position.peak_price) * 100
                 if drop_from_peak >= trail_pct:
                     reason = (f"Trailing stop: {drop_from_peak:.2f}% below peak "
                               f"${position.peak_price:.2f} (limit {trail_pct:.2f}%).")
+                    tag = "trailing_stop"
             if reason:
                 proposals.append(OrderProposal(
                     symbol=symbol, side=Side.SELL, quantity=position.quantity,
-                    price=quote.price, confidence=1.0, reason=reason,
+                    price=quote.price, confidence=1.0, reason=reason, tag=tag,
                 ))
         return proposals
 
@@ -956,7 +1260,8 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         routes = {
             "/": lambda: self._send_file(STATIC / "index.html", "text/html"),
             "/api/stream": self._sse_stream,
@@ -966,6 +1271,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/tick/resume": lambda: self._json(ENGINE.resume_tick()),
             "/api/audit": lambda: self._serve_jsonl_tail(AUDIT_LOG, 100),
             "/api/sessions": lambda: self._serve_jsonl_tail(SESSIONS_LOG, 50),
+            "/api/metrics": lambda: self._json(
+                metrics_report(parse_qs(parsed.query).get("window", ["session"])[0])
+            ),
             "/api/backtest/last": lambda: self._serve_jsonl_tail(BACKTEST_LOG, 1),
             "/api/ai/status": lambda: self._json({"ai": AI_STATUS.as_dict()}),
         }

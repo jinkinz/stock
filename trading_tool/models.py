@@ -94,6 +94,34 @@ class Position:
     quantity: float = 0.0
     avg_cost: float = 0.0
     peak_price: float = 0.0          # high-water mark since entry — drives trailing stop
+    # ── Round-trip accounting ────────────────────────────────────────────
+    # Everything below survives the position going flat: the broker zeroes
+    # quantity/avg_cost/peak_price on the closing fill, and the engine reads
+    # these fields one call later to emit the closed-trade record. Only
+    # reset_round_trip() clears them.
+    opened_at: str = ""              # ISO time of the first entry fill
+    entry_price: float = 0.0         # weighted avg entry cost for this round trip
+    entry_qty: float = 0.0           # total shares bought this round trip
+    entry_score: float = 0.0         # signal score at entry
+    entry_strategy: str = ""         # settings.ai_strategy_name at entry
+    entry_mode: str = ""             # paper | live at entry
+    entry_diagnostics: dict = field(default_factory=dict)
+    fees_paid: float = 0.0           # fees across entry + all (partial) exits
+    exit_qty: float = 0.0            # shares sold so far this round trip
+    exit_proceeds: float = 0.0       # gross proceeds so far (before fees)
+
+    def reset_round_trip(self) -> None:
+        """Clear entry context after a completed round trip has been logged."""
+        self.opened_at = ""
+        self.entry_price = 0.0
+        self.entry_qty = 0.0
+        self.entry_score = 0.0
+        self.entry_strategy = ""
+        self.entry_mode = ""
+        self.entry_diagnostics = {}
+        self.fees_paid = 0.0
+        self.exit_qty = 0.0
+        self.exit_proceeds = 0.0
 
 
 @dataclass
@@ -149,6 +177,11 @@ class OrderProposal:
     price: float
     reason: str
     confidence: float
+    # Machine-readable origin of this proposal. On a SELL it becomes the closed
+    # trade's exit_reason — never parse the free-text `reason` for this.
+    #   profit_lock | stop_loss | trailing_stop | ai_sell | strategy_sell
+    #   | session_end | "" (→ recorded as "manual")
+    tag: str = ""
     id: str = field(default_factory=lambda: uuid4().hex)
     status: OrderStatus = OrderStatus.PROPOSED
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

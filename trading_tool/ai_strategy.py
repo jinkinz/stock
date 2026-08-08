@@ -655,6 +655,7 @@ class AIStrategy:
                     proposals.append(OrderProposal(
                         symbol=symbol, side=Side.SELL, quantity=sell_qty,
                         price=quote.price, confidence=confidence, reason=reason,
+                        tag="ai_sell",
                     ))
 
             elif action == "buy" and held == 0:
