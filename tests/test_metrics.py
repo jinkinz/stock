@@ -1,4 +1,4 @@
-"""Unit tests for trading_tool.metrics — stdlib unittest, no dependencies.
+"""Unit tests for metrics — stdlib unittest, no dependencies.
 
 Run from the repo root:  python3 -m unittest discover tests
 """
@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from trading_tool.metrics import (  # noqa: E402
+from metrics import (  # noqa: E402
     MIN_MEANINGFUL_SAMPLE,
     compute_metrics,
     equal_weight_return,

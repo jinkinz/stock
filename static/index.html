@@ -53,7 +53,7 @@
           <div class="field-row">
             <div class="field"><label for="budget">Budget ($)</label>
               <input id="budget" name="budget" type="number" min="0" step="any" value="1000" /></div>
-            <div class="field"><label for="duration_minutes">Duration (min)</label>
+            <div class="field" id="durationField"><label for="duration_minutes">Duration (min)</label>
               <input id="duration_minutes" name="duration_minutes" type="number" min="1" value="390" /></div>
           </div>
           <div class="field-row">
@@ -66,6 +66,14 @@
             <label for="max_scan_symbols">Max Symbols <span class="hint-inline">0 = unlimited (not recommended)</span></label>
             <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="0" max="500" value="50" />
           </div>
+          <div class="field">
+            <label for="tradingHorizon">Horizon</label>
+            <select id="tradingHorizon" name="trading_horizon">
+              <option value="intraday">Intraday — flat by session end</option>
+              <option value="swing">Swing — hold across days</option>
+            </select>
+          </div>
+          <div class="hint-inline" style="padding:0 2px 8px">Swing uses daily candles, so the indicators measure days rather than minutes, and sessions do not auto-expire. It clears fee costs far more easily than intraday — but positions are held overnight, where a gap can open below your stop.</div>
           <div class="field">
             <label>Trading Mode</label>
             <div class="segmented" data-name="trading_mode">
@@ -126,6 +134,49 @@
             <input id="trailingStopPct" type="number" min="0" step="0.1" value="0" placeholder="e.g. 1" />
           </div>
           <div class="hint-inline" style="padding:0 2px 8px">Guaranteed mechanical rules, independent of AI judgment: Lock Profit sells a position once it gains that %; Stop Loss sells once it loses that % from entry; Trailing Stop sells a profitable position falling that % below its peak.</div>
+          <div class="field-row">
+            <div class="field">
+              <label for="riskPerTradePct">Risk / Trade (%) <span class="hint-inline">of equity</span></label>
+              <input id="riskPerTradePct" type="number" min="0" step="0.1" value="0.5" />
+            </div>
+            <div class="field">
+              <label for="atrStopMultiple">ATR Stop ×</label>
+              <input id="atrStopMultiple" type="number" min="0.1" step="0.1" value="2" />
+            </div>
+          </div>
+          <label class="toggle"><input id="useAtrSizing" type="checkbox" checked /><span>ATR position sizing</span></label>
+          <div class="hint-inline" style="padding:0 2px 8px">Sizes each trade so a stop-out costs the same % of equity whatever the symbol's volatility, and sets each position's stop from its own ATR rather than a flat %. Turning sizing off reverts to the flat Max Trade Value (larger positions, larger swings); ATR stops still apply.</div>
+          <div class="field-row">
+            <div class="field">
+              <label for="maxConcurrentPositions">Max Positions <span class="hint-inline">0 = off</span></label>
+              <input id="maxConcurrentPositions" type="number" min="0" step="1" value="5" />
+            </div>
+            <div class="field">
+              <label for="cooldownAfterLosses">Cooldown after N losses</label>
+              <input id="cooldownAfterLosses" type="number" min="0" step="1" value="3" />
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label for="dailyBudget">Daily Budget ($) <span class="hint-inline">0 = off</span></label>
+              <input id="dailyBudget" type="number" min="0" step="any" value="0" placeholder="e.g. 250" />
+            </div>
+            <div class="field">
+              <label for="dailyLossLimit">Daily Loss Limit ($)</label>
+              <input id="dailyLossLimit" type="number" min="0" step="any" value="0" placeholder="e.g. 50" />
+            </div>
+          </div>
+          <div class="hint-inline" style="padding:0 2px 8px">Daily Budget caps capital deployed per exchange trading day, counted cumulatively — buying, selling and buying again spends it twice. Days roll over in the exchange's own timezone, and all four limits survive a restart.</div>
+          <div class="field">
+            <label for="minConfirmations">Convergence Gate <span class="hint-inline">factors that must agree</span></label>
+            <select id="minConfirmations">
+              <option value="0">Off — score only (most trades)</option>
+              <option value="3">3 of 5</option>
+              <option value="4">4 of 5</option>
+              <option value="5" selected>5 of 5 — full agreement (fewest trades)</option>
+            </select>
+          </div>
+          <div class="hint-inline" style="padding:0 2px 8px">Requires trend, VWAP, volume, structure and momentum to agree before buying, instead of trusting one blended score. Fewer trades means less fee drag — and in testing the "almost agreed" band (4 of 5) was the worst-performing cohort.</div>
           <div class="field">
             <label for="aiProvider">AI Provider</label>
             <select id="aiProvider">
@@ -170,6 +221,9 @@
           <div class="acct-divider"></div>
           <div class="acct-stat"><div class="acct-label">Session Started</div><div class="acct-value" id="sessionStart" style="font-size:14px">—</div></div>
         </section>
+
+        <!-- Viability — can these settings make money at all? -->
+        <div id="viabilityBanner" class="viability-banner" style="display:none"></div>
 
         <!-- Performance — is the strategy actually working? -->
         <section class="card">
@@ -249,6 +303,51 @@
         <section class="card" id="backtestPanel" style="display:none">
           <div class="card-header"><h2>Backtest Results</h2></div>
           <div class="card-body" id="backtestResult"></div>
+        </section>
+
+        <!-- What works — configuration leaderboard -->
+        <section class="card collapsible collapsed" id="perfCard">
+          <div class="card-header clickable" id="perfToggle">
+            <h2>What Works <span class="badge" id="configCount">0</span></h2>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="hint-inline">Results by configuration</span>
+              <span class="collapse-icon">▼</span>
+            </div>
+          </div>
+          <div class="card-body collapsible-body" style="overflow-x:auto">
+            <table class="data-table" style="min-width:820px">
+              <thead><tr>
+                <th>Configuration</th><th>Trades</th><th>Expectancy</th><th>Net P&L</th>
+                <th>Win rate</th><th>Profit factor</th><th>Fees</th><th>Period</th>
+              </tr></thead>
+              <tbody id="configBody">
+                <tr><td colspan="8" class="empty-cell">No closed trades yet</td></tr>
+              </tbody>
+            </table>
+            <div class="perf-foot" id="configFoot"></div>
+          </div>
+        </section>
+
+        <!-- Closed Trades — collapsible, starts collapsed -->
+        <section class="card collapsible collapsed" id="tradesCard">
+          <div class="card-header clickable" id="tradesToggle">
+            <h2>Closed Trades <span class="badge" id="tradesCount">0</span></h2>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="hint-inline">Completed round trips</span>
+              <span class="collapse-icon">▼</span>
+            </div>
+          </div>
+          <div class="card-body collapsible-body" style="overflow-x:auto">
+            <table class="data-table" style="min-width:720px">
+              <thead><tr>
+                <th>Closed</th><th>Symbol</th><th>Qty</th><th>Entry</th><th>Exit</th>
+                <th>Hold</th><th>Net P&L</th><th>Return</th><th>Why it ended</th>
+              </tr></thead>
+              <tbody id="tradesBody">
+                <tr><td colspan="9" class="empty-cell">No closed trades yet</td></tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <!-- Session History — collapsible, starts collapsed -->

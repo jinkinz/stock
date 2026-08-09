@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
-from .models import OrderProposal, OrderStatus, Portfolio, Position, Quote, Side
+from models import OrderProposal, OrderStatus, Portfolio, Position, Quote, Side
 
 
 def _load_dotenv() -> None:
@@ -43,9 +43,24 @@ LB_STATUS: dict = {"connected": False, "error": None}
 
 # Paper-trading friction model. Without these, paper fills execute at the
 # exact last price with zero fees, which systematically overstates P&L —
-# especially for high-turnover scalping. Override in .env if needed.
-PAPER_FEE_PER_TRADE = float(os.environ.get("PAPER_FEE_PER_TRADE", "1.0"))
+# especially for high-turnover scalping.
+#
+# Fees come from the per-market schedules in fees.py (SG measured from real
+# contract notes; US/HK are flagged estimates). Setting PAPER_FEE_PER_TRADE in
+# .env overrides the whole model with a flat per-order charge — useful for a
+# quick what-if, but it will not resemble a real bill.
+PAPER_FEE_OVERRIDE = os.environ.get("PAPER_FEE_PER_TRADE", "").strip()
+PAPER_FEE_PER_TRADE = float(PAPER_FEE_OVERRIDE) if PAPER_FEE_OVERRIDE else None
 PAPER_SLIPPAGE_BPS = float(os.environ.get("PAPER_SLIPPAGE_BPS", "5.0"))
+
+
+def paper_fee(symbol: str, side: str, quantity: float, price: float) -> float:
+    """Modelled brokerage cost of one paper fill, in the symbol's currency."""
+    if PAPER_FEE_PER_TRADE is not None:
+        return PAPER_FEE_PER_TRADE
+    from fees import estimate_fee
+    from market_hours import market_of
+    return estimate_fee(market_of(symbol), side, quantity, price)
 
 
 class Broker(Protocol):
@@ -187,7 +202,10 @@ class PaperBroker:
         last = self._prices.get(symbol, proposal.price)
         quantity = round(float(proposal.quantity), 6)
         slip = PAPER_SLIPPAGE_BPS / 10_000.0
-        fee = PAPER_FEE_PER_TRADE
+        # Fee depends on side, size and price, so it is computed per fill from
+        # the market's real schedule rather than being a flat constant.
+        fee = paper_fee(symbol, proposal.side.value, quantity,
+                        last * (1.0 + slip if proposal.side is Side.BUY else 1.0 - slip))
         position = self._portfolio.positions.setdefault(symbol, Position(symbol=symbol))
 
         if proposal.side is Side.BUY:
@@ -206,8 +224,6 @@ class PaperBroker:
             position.entry_price = ((position.entry_qty * position.entry_price) + notional) / new_entry_qty
             position.entry_qty = new_entry_qty
             position.fees_paid = round(position.fees_paid + fee, 6)
-            if not position.opened_at:
-                position.opened_at = datetime.now(timezone.utc).isoformat()
             self._portfolio.cash -= notional + fee
             self._portfolio.realized_pnl -= fee
         else:
@@ -227,12 +243,17 @@ class PaperBroker:
                 position.quantity = 0.0
                 position.avg_cost = 0.0
                 position.peak_price = 0.0
+                # The next entry sets its own stop from fresh ATR; carrying a
+                # stale one over would protect the new position at the old
+                # position's price.
+                position.stop_price = 0.0
                 # Entry context is deliberately NOT cleared here — the engine
                 # reads it right after this call to emit the round-trip record,
                 # then calls Position.reset_round_trip().
 
         proposal.price = round(price, 2)
         proposal.quantity = quantity
+        proposal.fee = round(fee, 4)
         self._portfolio.cash = round(self._portfolio.cash, 2)
         self._portfolio.realized_pnl = round(self._portfolio.realized_pnl, 6)
         return proposal
@@ -253,12 +274,14 @@ class PaperBroker:
                     symbol: {
                         "symbol": pos.symbol, "quantity": pos.quantity,
                         "avg_cost": pos.avg_cost, "peak_price": pos.peak_price,
+                        "stop_price": pos.stop_price,
                         # Entry context must round-trip through disk, or a
                         # restart mid-position loses the trade record.
                         "opened_at": pos.opened_at, "entry_price": pos.entry_price,
                         "entry_qty": pos.entry_qty, "entry_score": pos.entry_score,
                         "entry_strategy": pos.entry_strategy, "entry_mode": pos.entry_mode,
                         "entry_diagnostics": pos.entry_diagnostics,
+                        "entry_config": pos.entry_config,
                         "fees_paid": pos.fees_paid, "exit_qty": pos.exit_qty,
                         "exit_proceeds": pos.exit_proceeds,
                     }
@@ -360,6 +383,10 @@ class LongbridgeBroker:
         self.trade_ctx = TradeContext(config)
         self._portfolio = Portfolio(cash=0.0)
         self._lot_sizes: dict[str, int] = {}
+        # currency -> available cash, refreshed by portfolio(). The live budget
+        # guard checks an order against the balance in ITS OWN currency; a
+        # USD-only reading cannot cover an SGD order.
+        self._cash_by_currency: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Quotes
@@ -391,6 +418,9 @@ class LongbridgeBroker:
             low=num("low"),
             volume=num("volume"),
             turnover=num("turnover"),
+            # e.g. "TradeStatus.Normal" -> "normal". Anything else is a symbol
+            # the exchange is not trading normally right now.
+            trade_status=str(getattr(item, "trade_status", "") or "normal").rsplit(".", 1)[-1].lower(),
         )
 
     def quote(self, symbol: str) -> Quote:
@@ -588,6 +618,30 @@ class LongbridgeBroker:
             pass
         return None
 
+    @staticmethod
+    def _charged_fee(order) -> float:
+        """Total fee actually billed on a filled order, from charge_detail.
+        Returns 0.0 when the broker didn't supply one — the caller must not
+        assume 0 means free."""
+        detail = getattr(order, "charge_detail", None)
+        if detail is None:
+            return 0.0
+        try:
+            total = float(getattr(detail, "total_amount", 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+        if total > 0:
+            return round(total, 4)
+        # Some responses itemise without a total.
+        summed = 0.0
+        for item in getattr(detail, "items", []) or []:
+            for fee in getattr(item, "fees", []) or []:
+                try:
+                    summed += float(getattr(fee, "amount", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+        return round(summed, 4)
+
     def submit_order(self, proposal: OrderProposal) -> OrderProposal:
         side = self.OrderSide.Buy if proposal.side is Side.BUY else self.OrderSide.Sell
         # Longbridge takes whole shares only, in board-lot multiples.
@@ -633,6 +687,9 @@ class LongbridgeBroker:
                         proposal.price = float(executed)
                 except (TypeError, ValueError):
                     pass
+                # Real charges, straight from the contract note — no modelling
+                # needed once the broker has billed it.
+                proposal.fee = self._charged_fee(order)
                 return proposal
             if any(k in status_name for k in ("Rejected", "Canceled", "Cancelled", "Expired")):
                 proposal.status = OrderStatus.FAILED
@@ -650,17 +707,34 @@ class LongbridgeBroker:
     # Portfolio — full sync from Longbridge
     # ------------------------------------------------------------------
 
+    def cash_by_currency(self) -> dict[str, float]:
+        """Available cash per currency as of the last portfolio() sync.
+
+        NOTE: this is the broker's `available_cash`. On a margin account that
+        figure can include borrowing power rather than settled cash, so it is
+        NOT proof that an order is cash-covered. The budget ceiling in
+        TradingEngine is the binding constraint; this is a second bound.
+        """
+        return dict(self._cash_by_currency)
+
     def portfolio(self) -> Portfolio:
         """Sync cash and stock positions from Longbridge account."""
         # --- cash ---
         try:
             balances = self.trade_ctx.account_balance()
-            cash = 0.0
+            by_currency: dict[str, float] = {}
             for balance in balances:
                 for info in getattr(balance, "cash_infos", []) or []:
-                    if getattr(info, "currency", "") == "USD":
-                        cash += float(getattr(info, "available_cash", 0) or 0)
-            self._portfolio.cash = round(cash, 2)
+                    currency = str(getattr(info, "currency", "") or "").upper()
+                    if not currency:
+                        continue
+                    amount = float(getattr(info, "available_cash", 0) or 0)
+                    by_currency[currency] = by_currency.get(currency, 0.0) + amount
+            self._cash_by_currency = {c: round(v, 2) for c, v in by_currency.items()}
+            # portfolio.cash stays USD — it feeds equity() and the UI, both of
+            # which are single-currency. Order sizing must use
+            # cash_by_currency(), never this field.
+            self._portfolio.cash = round(by_currency.get("USD", 0.0), 2)
         except Exception:
             pass
 

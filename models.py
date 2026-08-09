@@ -30,6 +30,43 @@ class OrderStatus(str, Enum):
     FAILED = "failed"
 
 
+# Settings whose sensible value depends entirely on the holding horizon. A 1%
+# stop is a normal morning's noise on a multi-day hold; a 390-minute session
+# timer is meaningless when positions are held for a week. These are kept as
+# SEPARATE saved profiles so switching horizon does not destroy the other one's
+# tuning — and so the two can be compared honestly.
+HORIZON_FIELDS = (
+    "duration_minutes", "stop_at_end", "lock_profit_pct", "stop_loss_pct",
+    "trailing_stop_pct", "tick_interval_seconds", "risk_per_trade_pct",
+    "atr_stop_multiple",
+)
+
+HORIZON_DEFAULTS: dict[str, dict] = {
+    "intraday": {
+        # Mirrors the dataclass defaults exactly, so switching away and back
+        # restores what a fresh install actually had rather than a second,
+        # subtly different set of "defaults".
+        "duration_minutes": 390, "stop_at_end": True,
+        "lock_profit_pct": 0.0, "stop_loss_pct": 2.0, "trailing_stop_pct": 0.0,
+        "tick_interval_seconds": 60,
+        # Intraday ATR is a fraction of a percent, so a small risk % implies a
+        # huge position — see sizing.py. Kept low deliberately.
+        "risk_per_trade_pct": 0.5, "atr_stop_multiple": 2.0,
+    },
+    "swing": {
+        # Sessions do not expire and nothing is force-flattened, so duration is
+        # inert here — kept at a valid value rather than 0, which normalized()
+        # would clamp to a misleading 1 minute.
+        "duration_minutes": 390, "stop_at_end": False,
+        # Wide enough to clear round-trip costs, which intraday targets cannot.
+        "lock_profit_pct": 3.0, "stop_loss_pct": 2.0, "trailing_stop_pct": 0.0,
+        # Daily bars change once a day; polling every minute is waste.
+        "tick_interval_seconds": 900,
+        "risk_per_trade_pct": 1.0, "atr_stop_multiple": 2.0,
+    },
+}
+
+
 @dataclass
 class Settings:
     symbol: str = "AAPL.US"
@@ -54,6 +91,42 @@ class Settings:
     stop_loss_pct: float = 2.0        # auto-sell a position once it loses this % from entry (0 = off)
     trailing_stop_pct: float = 0.0    # auto-sell if price falls this % from its peak while in profit (0 = off)
     ai_strategy_name: str = "fifo"    # which AI strategy to use
+    # "intraday" — 1-min candles, session expires after duration_minutes,
+    #              stop_at_end can flatten. Indicators measure minutes.
+    # "swing"    — daily candles, sessions do NOT auto-expire, positions are
+    #              meant to be held overnight. Indicators measure days.
+    # This is the single switch that changes the holding horizon; see
+    # TradingEngine.CANDLE_SPEC and _session_expired().
+    trading_horizon: str = "intraday"
+    # Saved values per horizon. The flat fields above are the ACTIVE ones for
+    # the current horizon; this holds the other horizon's tuning so switching
+    # back restores it instead of silently reusing numbers meant for the other.
+    horizon_profiles: dict = field(
+        default_factory=lambda: {k: dict(v) for k, v in HORIZON_DEFAULTS.items()})
+    # Refuse buys whose profit target cannot clear their own round-trip costs.
+    # A trade that loses money when it WINS is never worth placing; leave this
+    # on unless you are deliberately measuring the damage.
+    enforce_trade_viability: bool = True
+    # Convergence gate: how many INDEPENDENT factors must agree before a buy.
+    # A single blended score can hide disagreement — a big day move alone can
+    # drag the total over the line while trend, VWAP and volume all say no.
+    # Higher = fewer, higher-conviction trades = less fee drag. 0 disables it.
+    #
+    # Defaults to full convergence (5). Replay across three datasets showed the
+    # "almost converged" band (exactly 4 of 5) is reliably the WORST cohort,
+    # while requiring all five improved expectancy every time and cut trade
+    # count ~40%. 5 is deliberately an endpoint, not a tuned interior optimum —
+    # picking the best-scoring middle value would be curve-fitting.
+    min_confirmations: int = 5
+    # ── Risk-based position sizing (see sizing.py) ───────────────────────
+    risk_per_trade_pct: float = 0.5   # % of equity risked if the stop fires
+    atr_stop_multiple: float = 2.0    # stop distance = N × ATR
+    use_atr_sizing: bool = True       # off = flat max_trade_value sizing
+    # ── Portfolio protections (see risk.py). 0 disables each one. ────────
+    max_concurrent_positions: int = 5
+    daily_budget: float = 0.0         # capital deployable per exchange-local day
+    daily_loss_limit: float = 0.0     # realised loss that halts buying for the day
+    cooldown_after_losses: int = 3    # N consecutive losers pauses buying
 
     def normalized(self) -> "Settings":
         self.symbol = self.symbol.strip().upper()
@@ -72,11 +145,82 @@ class Settings:
         self.lock_profit_pct = max(0.0, float(self.lock_profit_pct))
         self.stop_loss_pct = max(0.0, float(self.stop_loss_pct))
         self.trailing_stop_pct = max(0.0, float(self.trailing_stop_pct))
+        self.enforce_trade_viability = bool(self.enforce_trade_viability)
+        self.min_confirmations = max(0, min(5, int(self.min_confirmations)))
+        self.risk_per_trade_pct = max(0.0, min(100.0, float(self.risk_per_trade_pct)))
+        self.atr_stop_multiple = max(0.1, float(self.atr_stop_multiple))
+        self.use_atr_sizing = bool(self.use_atr_sizing)
+        self.max_concurrent_positions = max(0, int(self.max_concurrent_positions))
+        self.daily_budget = max(0.0, float(self.daily_budget))
+        self.daily_loss_limit = max(0.0, float(self.daily_loss_limit))
+        self.cooldown_after_losses = max(0, int(self.cooldown_after_losses))
+        horizon = str(self.trading_horizon or "").strip().lower()
+        self.trading_horizon = horizon if horizon in ("intraday", "swing") else "intraday"
         # If an hourly rate is set, it drives the session target automatically —
         # e.g. $20/hr over a 390-minute (6.5hr) session = $130 target.
         if self.target_profit_per_hour > 0:
             self.target_profit = round(self.target_profit_per_hour * (self.duration_minutes / 60.0), 2)
         return self
+
+    @property
+    def is_swing(self) -> bool:
+        return self.trading_horizon == "swing"
+
+    # ── Horizon profiles ─────────────────────────────────────────────────
+
+    def _horizon_snapshot(self) -> dict:
+        return {field: getattr(self, field) for field in HORIZON_FIELDS}
+
+    def sync_horizon_profile(self) -> "Settings":
+        """Persist the active values into the current horizon's profile."""
+        if not isinstance(self.horizon_profiles, dict):
+            self.horizon_profiles = {}
+        self.horizon_profiles[self.trading_horizon] = self._horizon_snapshot()
+        return self
+
+    def switch_horizon(self, new_horizon: str) -> "Settings":
+        """Stash the current horizon's tuning and load the other one's.
+
+        Without this, switching to swing would carry a 1% stop and a 390-minute
+        session timer across — numbers that mean something completely different
+        on a multi-day hold.
+        """
+        new_horizon = (new_horizon or "").strip().lower()
+        if new_horizon not in HORIZON_DEFAULTS or new_horizon == self.trading_horizon:
+            return self
+        self.sync_horizon_profile()
+        saved = self.horizon_profiles.get(new_horizon) or HORIZON_DEFAULTS[new_horizon]
+        for field_name in HORIZON_FIELDS:
+            if field_name in saved:
+                setattr(self, field_name, saved[field_name])
+        self.trading_horizon = new_horizon
+        return self
+
+    def config_fingerprint(self) -> dict:
+        """The settings that materially shape a trade, for grouping outcomes.
+
+        Deliberately small: parameters that change WHICH trades are taken and
+        WHERE they exit. Not budget or universe, which affect size and
+        candidates rather than the decision rule.
+        """
+        return {
+            "horizon": self.trading_horizon,
+            "strategy": self.ai_strategy_name,
+            "min_confirmations": self.min_confirmations,
+            "lock_profit_pct": self.lock_profit_pct,
+            "stop_loss_pct": self.stop_loss_pct,
+            "trailing_stop_pct": self.trailing_stop_pct,
+            "sizing": "atr" if self.use_atr_sizing else "flat",
+            "risk_per_trade_pct": self.risk_per_trade_pct,
+            "atr_stop_multiple": self.atr_stop_multiple,
+        }
+
+    def config_key(self) -> str:
+        """Short human-readable grouping key, e.g.
+        `swing/fifo/gate5/+3.0-2.0/atr`."""
+        f = self.config_fingerprint()
+        return (f"{f['horizon']}/{f['strategy']}/gate{f['min_confirmations']}"
+                f"/+{f['lock_profit_pct']:g}-{f['stop_loss_pct']:g}/{f['sizing']}")
 
     def active_universe(self) -> list[str]:
         if self.universe:
@@ -94,6 +238,9 @@ class Position:
     quantity: float = 0.0
     avg_cost: float = 0.0
     peak_price: float = 0.0          # high-water mark since entry — drives trailing stop
+    # Absolute stop price fixed at entry from the symbol's own ATR. 0.0 means
+    # none was set, and the flat stop_loss_pct applies instead.
+    stop_price: float = 0.0
     # ── Round-trip accounting ────────────────────────────────────────────
     # Everything below survives the position going flat: the broker zeroes
     # quantity/avg_cost/peak_price on the closing fill, and the engine reads
@@ -106,6 +253,10 @@ class Position:
     entry_strategy: str = ""         # settings.ai_strategy_name at entry
     entry_mode: str = ""             # paper | live at entry
     entry_diagnostics: dict = field(default_factory=dict)
+    # The configuration this trade was opened under. Without it the ledger can
+    # say a trade lost money but not what settings produced it — which makes
+    # "what actually works" unanswerable after the fact.
+    entry_config: dict = field(default_factory=dict)
     fees_paid: float = 0.0           # fees across entry + all (partial) exits
     exit_qty: float = 0.0            # shares sold so far this round trip
     exit_proceeds: float = 0.0       # gross proceeds so far (before fees)
@@ -119,6 +270,7 @@ class Position:
         self.entry_strategy = ""
         self.entry_mode = ""
         self.entry_diagnostics = {}
+        self.entry_config = {}
         self.fees_paid = 0.0
         self.exit_qty = 0.0
         self.exit_proceeds = 0.0
@@ -137,6 +289,9 @@ class Quote:
     low: float = 0.0
     volume: float = 0.0
     turnover: float = 0.0
+    # Exchange trading status. "normal" = tradable; anything else (halted,
+    # suspended, delisted) must never be bought into.
+    trade_status: str = "normal"
 
 
 @dataclass
@@ -149,6 +304,7 @@ class Diagnostics:
     volume_spike: bool = False        # True when recent tick-count is >2× baseline
     trend_strength: float = 0.0      # abs(short_avg/long_avg - 1) × 100
     news_gate: bool = True            # True = OK to trade; False = news blackout (stub)
+    tradable: bool = True             # False = exchange says halted/suspended
     # Real-market metrics (0.0 / "" when data unavailable)
     day_change_pct: float = 0.0      # % vs previous close
     from_high_pct: float = 0.0       # % below the day high (≤ 0)
@@ -157,6 +313,8 @@ class Diagnostics:
     vwap_dist_pct: float = 0.0       # % above (+) / below (−) session VWAP
     ema_trend: str = ""              # "bull" (EMA9>EMA21), "bear", or "" unknown
     vol_surge: float = 0.0           # recent vs session-avg minute volume (RVOL proxy)
+    atr: float = 0.0                 # Average True Range — 0.0 = unknown, NOT "no volatility"
+    atr_pct: float = 0.0             # ATR as % of price — comparable across symbols
 
 
 @dataclass
@@ -182,6 +340,10 @@ class OrderProposal:
     #   profit_lock | stop_loss | trailing_stop | ai_sell | strategy_sell
     #   | session_end | "" (→ recorded as "manual")
     tag: str = ""
+    # Brokerage cost of this fill. Modelled from fees.py in paper mode; read
+    # from the broker's real charge_detail in live mode. 0.0 means "not known",
+    # not "free".
+    fee: float = 0.0
     id: str = field(default_factory=lambda: uuid4().hex)
     status: OrderStatus = OrderStatus.PROPOSED
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

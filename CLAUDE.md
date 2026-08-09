@@ -7,12 +7,12 @@ live orders, multi-provider LLM "brain" for trade decisions.
 ## Run / verify
 
 ```bash
-python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:8765
+python3 app.py        # from repo root — serves http://127.0.0.1:8765
 ```
 
 - Startup banner prints credential + connection status (Longbridge, AI provider).
 - `python3 -m unittest discover tests` — covers `metrics.py` only.
-- `python3 -m trading_tool.replay` — replays real historical candles through
+- `python3 replay.py` — replays real historical candles through
   the real `TradingEngine` to verify the fill → ledger → metrics path without
   a market being open. **Run this after any change to `execute()`, the
   mechanical exits, proposal tagging, or the ledger.** Writes to a temp dir;
@@ -22,9 +22,9 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 - System python3 is 3.9 (code uses `from __future__ import annotations`).
 - macOS box: no `timeout` command; use background `&` + `sleep` + `pkill`.
 - Check for an already-running instance before starting one (port 8765);
-  `pkill -f trading_tool.app` kills the user's instance too — be careful.
+  `pkill -f 'python3 app.py'` kills the user's instance too — be careful.
 
-## Architecture (trading_tool/)
+## Architecture (repo root — flat, no package dir)
 
 | File | Role |
 |---|---|
@@ -35,6 +35,10 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 | `models.py` | Dataclasses: Settings, Portfolio, Position (`peak_price` + round-trip entry context, `reset_round_trip()`), Quote (enriched: prev_close/high/low/volume/turnover), Signal, Diagnostics, OrderProposal (has `tag` → exit_reason) |
 | `market_hours.py` | US/HK/SG regular-session times (zoneinfo); `is_market_open`, `market_of`, `markets_status` |
 | `replay.py` | Dev harness: replays real candles through the real engine to prove the fill → ledger path works. `ReplayBroker` subclasses `PaperBroker` (fills/fees inherited unchanged), serves day-to-date quote context from bars. Not a backtest — judge the checks, not the P&L |
+| `fees.py` | Per-market brokerage fee schedules (`FeeComponent`/`FeeSchedule`). SG is MEASURED from real contract notes and `verified=True`; US/HK are flagged estimates. Unknown markets fall back to a flat charge — paper fills must never be free |
+| `calibrate_fees.py` | Read-only: compares modelled fees against real `charge_detail` from order history. Run after any real fill to correct `fees.py` with evidence |
+| `risk.py` | `RiskState` + `check_limits()` — portfolio protections: concentration cap, daily deployment budget, daily loss halt, loss-streak cooldown. Days are EXCHANGE-local; `daily_budget` counts cumulative deployment, not currently-held. Persisted in paper_state.json so limits survive restarts |
+| `sizing.py` | `size_position()` — ATR risk-based sizing (pure, no I/O). Every position risks the same % of equity; volatile symbols get fewer shares. Clamped by max_trade_value → 25% of cash → available cash. Falls back to flat sizing when ATR is missing and SAYS SO in `reason`. **Timeframe-sensitive**: intraday ATR is tiny, so the same risk % implies a far larger position than on daily bars |
 | `metrics.py` | Pure functions over closed round trips: win rate, expectancy, profit factor, drawdown, fees, breakdowns by exit_reason/strategy. No I/O, no app imports — unit-tested in `tests/test_metrics.py` |
 | `state/` | JSON persistence: paper_state.json, trade_log.jsonl (per-fill), trades_closed.jsonl (per round trip), audit_log.jsonl (rotates at 5MB), sessions_log.jsonl |
 | `static/` | index.html + app.js (SSE client, render functions) + styles.css |
@@ -42,10 +46,19 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 ## Decision layers (order matters)
 
 1. **Signal engine** scores every symbol; BUY needs score ≥0.55, positive day
-   change, RSI <75, turnover ≥$500k.
+   change, RSI <75, turnover ≥$500k, **and** `settings.min_confirmations`
+   independent factors agreeing (trend / vwap / volume / structure / momentum —
+   `MomentumStrategy._confirmations()`, default 5 of 5). A factor with no data
+   counts as NOT confirmed, never as confirmed. Blocked signals are downgraded
+   to `watch` with score capped below 0.55 so nothing ranking on score still
+   treats them as candidates.
 2. **Mechanical exits** run BEFORE the AI each tick: profit lock → stop loss →
    trailing stop (uses `Position.peak_price`), plus max-loss circuit breaker.
-   The AI can exit earlier but never hold past these.
+   The AI can exit earlier but never hold past these. The stop is
+   `Position.stop_price` (absolute, fixed at entry from that symbol's ATR) when
+   set, falling back to flat `stop_loss_pct` when ATR was unavailable. A
+   position carrying an ATR stop keeps the exit loop alive even when every
+   percentage setting is 0.
 3. **AI brain** (≤1 call/30s) returns JSON decisions; sanitizer caps SELL at
    held qty, BUY at min(max_trade_value, 35% cash), max 5 proposals.
 
@@ -54,6 +67,11 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 - A **trade** is a round trip (entry fill(s) → exit fill(s)), not a fill.
   `trade_log.jsonl` records fills; `trades_closed.jsonl` records round trips and
   is the only input to metrics.
+- `GET /api/trades?window=…&limit=N` → `closed_trades_report()`: the individual
+  round trips, newest first. Bounded twice — `_tail_lines()` on read and
+  `MAX_TRADES_RESPONSE` (200) on the response. Malformed ledger lines are
+  skipped, never fatal. Shares the window vocabulary with `/api/metrics`; the
+  two are views of one ledger and must never disagree (there is a test).
 - `GET /api/metrics?window=session|day|week|all` → `metrics_report()`:
   expectancy (the headline number), win rate, profit factor, drawdown, fees as
   % of gross, plus strategy-vs-buy-and-hold. `sample_warning` is set under 20
@@ -61,8 +79,20 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 - The benchmark equal-weights buy-and-hold of the traded symbols over the same
   window from real candles — capped at 10 symbols, cached 5 min (each symbol is
   a candle API call). Falls back to ledger prices when Longbridge is down.
-- Live-mode records carry `fees_modelled: false` — the order API doesn't return
-  commissions, so live net P&L is optimistic. Paper mode models fees fully.
+- **Trade viability** (`TradingEngine._viability_denial()`, in `execute()`):
+  a BUY whose profit target cannot clear its own round-trip costs is refused —
+  in PAPER as well as live, because a structurally-losing paper trade corrupts
+  the baseline. Governed by `settings.enforce_trade_viability` (default on).
+  Skipped when `lock_profit_pct` is 0 (no target = nothing to judge against).
+  SELLs are never blocked on cost grounds — trapping a position is worse than
+  any fee. `fees.assess_trade()` also returns `min_viable_notional`, so the
+  error says what size WOULD work rather than just refusing.
+- Fees are never a flat constant. Paper fills price them per market via
+  `fees.paper_fee()`; live fills read the broker's real `charge_detail`. Each
+  closed trade records `fees_source`: `actual` (billed), `modelled` (paper), or
+  `unknown` (live fill with no charge data — do NOT read as free).
+- `PAPER_FEE_PER_TRADE` in `.env` overrides the whole model with a flat charge.
+  It exists for what-ifs; the startup banner shouts when it's active.
 - `max_drawdown_pct` is measured against the **equity** curve
   (`starting_equity + cumulative P&L`), so pass `starting_equity` into
   `compute_metrics()` whenever it's known. Without it the percentage falls back
@@ -77,6 +107,23 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 - Paper mode is default; live orders need BOTH `trading_mode=live` AND
   `allow_live_trading=true`.
 - No options, margin, or shorting — hard-coded in `TradingEngine.execute()`.
+- **LIVE hard limits** (`TradingEngine._live_guard()`, enforced in `execute()`
+  — the one chokepoint every order crosses; not overridable by settings):
+  1. **Budget ceiling.** Deployed cost basis + in-flight buys can never exceed
+     `settings.budget`. Oversized buys are trimmed to fit, then blocked. Note
+     `portfolio.cash` in live mode is the REAL account balance, not the budget
+     — never size against it directly (`strategy.py` does, which is why the
+     engine caps what the strategy sees via `_tradable_view()`).
+  2. **Ownership.** The tool only sells positions it opened. `entry_qty > 0`
+     is the marker; synced exchange positions the tool never bought have 0 and
+     are invisible to mechanical exits, stop-at-end, the strategy and the AI.
+  3. **Currency.** Live orders are limited to `LIVE_ENFORCED_CURRENCIES`
+     (USD, SGD) — currencies whose balance `cash_by_currency()` can actually
+     read. Adding one means adding real balance handling, not just a string.
+  Budget notionals are counted at face value per currency (conservative while
+  SGD < USD). PAPER mode is exempt by design: its starting cash already is the
+  budget, and adding a second ceiling would invalidate baselines measured
+  before this change. Covered by `tests/test_live_guards.py`.
 - Live orders round to whole shares AND board-lot multiples
   (`LongbridgeBroker.lot_size()` from static_info, cached). Live fills are
   confirmed by polling order status after submit — never assume a fill.
@@ -91,6 +138,39 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
   symbols and this previously caused 27MB logs and multi-MB SSE payloads.
 - The 10s quote-refresh loop and any display-only path must use
   `scan_signals_only()` — never the AI (burns paid tokens for nothing).
+- `news_gate` in `Diagnostics` is a STUB and always True — Longbridge has no
+  news/earnings/calendar API. `tradable` is the real veto, from
+  `SecurityQuote.trade_status`; halted symbols are never bought. Do not present
+  news_gate as working.
+- `python3 replay.py --split 0.6` splits the window into
+  in-sample/out-of-sample. Every measurement without it is in-sample and can be
+  regime-concentrated — the shipped gate-5 default is, notably.
+- **Horizon profiles** (`models.HORIZON_FIELDS` / `HORIZON_DEFAULTS`): eight
+  settings are horizon-specific (targets, stops, duration, tick interval, ATR
+  risk %). `Settings.horizon_profiles` keeps a saved set per horizon;
+  `switch_horizon()` stashes the old and loads the new so switching never
+  destroys the other's tuning. `update_settings` IGNORES horizon fields in a
+  payload that also switches horizon — they belong to the outgoing one.
+- **Every closed trade records `config` + `config_key`**
+  (`Settings.config_fingerprint()`), so "what works" is answered from evidence.
+  `GET /api/performance` ranks configurations by expectancy. Adding a setting
+  that changes WHICH trades are taken or WHERE they exit? Add it to the
+  fingerprint, or outcomes become uncomparable across a settings change.
+- **Trading horizon** (`settings.trading_horizon`, `intraday` | `swing`):
+  drives `TradingEngine.CANDLE_SPEC` (Min_1/120/55s vs Day/250/900s) and
+  `_session_expired()`. In swing mode sessions never auto-expire, so
+  `stop_at_end` can't flatten a multi-day position at an arbitrary moment; end
+  swing sessions manually. Indicators measure minutes on Min_1 bars and days on
+  Day bars — that IS the horizon change, not a cosmetic flag.
+- Time-based risk logic goes through `TradingEngine._now()`, NOT
+  `datetime.now()` directly. The replay overrides `simulated_now` with the
+  current bar's timestamp; without that a 30-minute cooldown swallows a whole
+  replay that finishes in seconds, and daily budget buckets never roll.
+- Portfolio limits (`risk.py`) are checked in `execute()` on BUYs only — never
+  block an exit. Every block writes an audit entry with `guard=portfolio_limits`;
+  a silent block is worse than no block. `max_positions_per_sector` is NOT
+  implemented: Longbridge `static_info` has no sector field, and a control that
+  can never fire reads as protection that does not exist.
 - Round-trip ledger: `Position` carries entry context (`entry_price`,
   `entry_qty`, `opened_at`, `fees_paid`, `exit_*`) that the broker must NOT
   clear when a position goes flat — `TradingEngine._record_round_trip()` reads
@@ -100,7 +180,7 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
 
 ## Environment
 
-- `.env` lives at `trading_tool/.env` (loader: script dir → cwd → `~/.env`);
+- `.env` lives at `.env` (loader: script dir → cwd → `~/.env`);
   git-ignored; contains real keys. Loader skips empty values silently.
 - Longbridge access tokens expire (~90 days) — "suddenly disconnected" usually
   means regenerate the token.
@@ -116,6 +196,11 @@ python3 -m trading_tool.app        # from repo root — serves http://127.0.0.1:
   in sync when changing strategy logic, settings, metrics, or safety rules.
 - `README.md` — short orientation: run, credentials, safety model, roadmap.
   Update the roadmap when a listed item ships.
-- `NEXT_SPEC.md` — the risk & measurement work plan. Phase 1 (trade ledger +
-  metrics) is **done**; Phases 2 (ATR position sizing) and 3 (portfolio
-  protections) are not started. `tests/test_sizing.py` belongs to Phase 2.
+- `NEXT_SPEC.md` — the roadmap, and the reasoning behind its order. Phase 1
+  (trade ledger + metrics) is **done**. Phase 2 is now "make the arithmetic
+  work" — a minimum-viable-trade guard, a convergence gate, and swing mode —
+  because measurement showed the strategy is structurally unprofitable at $250
+  positions (round-trip fees 1.60% US / 0.95% SG against a 0.8% target, so a
+  winning trade loses money). ATR sizing moved to Phase 3, portfolio
+  protections to Phase 4. Read the top section before proposing features: it
+  records what was measured, and what was tested and rejected.

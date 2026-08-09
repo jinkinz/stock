@@ -45,6 +45,35 @@ def market_of(symbol: str) -> str:
     return suffix.upper()
 
 
+# Settlement currency per market. An order priced in a currency we cannot
+# check the balance of is an order we cannot prove is covered by cash, so the
+# live guard blocks it outright — see LIVE_ENFORCED_CURRENCIES in app.py.
+MARKET_CURRENCY: dict[str, str] = {
+    "US": "USD",
+    "HK": "HKD",
+    "SG": "SGD",
+}
+
+
+def currency_of(symbol: str) -> str:
+    """Settlement currency for a symbol; '' when the market is unknown."""
+    return MARKET_CURRENCY.get(market_of(symbol), "")
+
+
+def local_date(market: str, now: datetime | None = None) -> str:
+    """The trading date in the EXCHANGE's own timezone, as YYYY-MM-DD.
+
+    A "day" is per-exchange: the US day rolls over hours after the SG one.
+    Using UTC would reset a daily limit in the middle of a US session.
+    Unknown markets fall back to UTC.
+    """
+    moment = now or datetime.now(timezone.utc)
+    info = MARKET_SESSIONS.get((market or "").upper())
+    if info is None:
+        return moment.astimezone(timezone.utc).strftime("%Y-%m-%d")
+    return moment.astimezone(ZoneInfo(info[0])).strftime("%Y-%m-%d")
+
+
 def open_markets(markets: list[str], now: datetime | None = None) -> list[str]:
     return [m for m in markets if is_market_open(m, now)]
 

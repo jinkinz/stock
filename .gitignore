@@ -1,7 +1,11 @@
 .env
-trading_tool/state/audit_log.jsonl
-trading_tool/state/paper_state.json
-trading_tool/state/sessions_log.jsonl
-trading_tool/state/paper_state.json
-trading_tool/.env.example
-trading_tool/state/paper_state.json
+.env.example
+state/audit_log.jsonl
+state/audit_log.jsonl.old
+state/paper_state.json
+state/sessions_log.jsonl
+state/trade_log.jsonl
+state/trades_closed.jsonl
+state/backtest_log.jsonl
+__pycache__/
+*.pyc

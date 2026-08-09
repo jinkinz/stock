@@ -10,8 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .broker import LongbridgeBroker, PaperBroker
-from .models import (
+from broker import LongbridgeBroker, PaperBroker
+from models import (
     ApprovalMode,
     AuditEntry,
     AuditEventType,
@@ -24,10 +24,11 @@ from .models import (
     TradingMode,
     to_json,
 )
-from .ai_strategy import AI_STATUS, AIStrategy
-from .market_hours import market_of, markets_status, open_markets
-from .metrics import compute_metrics, equal_weight_return
-from .strategy import MomentumStrategy, PROPOSAL_TTL_SECONDS
+from ai_strategy import AI_STATUS, AIStrategy
+from market_hours import currency_of, market_of, markets_status, open_markets
+from metrics import compute_metrics, equal_weight_return
+from risk import RiskState, check_limits
+from strategy import MomentumStrategy, PROPOSAL_TTL_SECONDS
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -85,6 +86,7 @@ class AppState:
         self.tick_paused: bool = False
         self.session_start_at: str | None = None
         self.session_start_equity: float = 0.0
+        self.risk_state = RiskState()
         # Symbol discovery cache — refreshed every 30 min to avoid rate limit hammering
         self._symbol_cache: list[str] = []
         self._symbol_cache_markets: list[str] = []
@@ -121,6 +123,7 @@ class AppState:
                     quantity=float(pos.get("quantity", 0)),
                     avg_cost=float(pos.get("avg_cost", 0)),
                     peak_price=float(pos.get("peak_price", 0)),
+                    stop_price=float(pos.get("stop_price", 0)),
                     # Round-trip context — absent in states written before the
                     # trade ledger existed, hence the defaults.
                     opened_at=pos.get("opened_at", ""),
@@ -130,6 +133,7 @@ class AppState:
                     entry_strategy=pos.get("entry_strategy", ""),
                     entry_mode=pos.get("entry_mode", ""),
                     entry_diagnostics=pos.get("entry_diagnostics") or {},
+                    entry_config=pos.get("entry_config") or {},
                     fees_paid=float(pos.get("fees_paid", 0)),
                     exit_qty=float(pos.get("exit_qty", 0)),
                     exit_proceeds=float(pos.get("exit_proceeds", 0)),
@@ -148,6 +152,7 @@ class AppState:
             self.tick_paused = bool(data.get("tick_paused", False))
             self.session_start_at = data.get("session_start_at")
             self.session_start_equity = float(data.get("session_start_equity", 0.0))
+            self.risk_state = RiskState.from_json(data.get("risk_state") or {})
             self.proposals = [self._proposal_from_json(item) for item in data.get("proposals", [])]
         except Exception:
             return
@@ -164,6 +169,7 @@ class AppState:
 
     def save(self) -> None:
         self.prune_proposals()
+        self.risk_state.prune()
         STATE_DIR.mkdir(exist_ok=True)
         payload = {
             "settings": to_json(self.settings),
@@ -173,6 +179,7 @@ class AppState:
             "tick_paused": self.tick_paused,
             "session_start_at": self.session_start_at,
             "session_start_equity": self.session_start_equity,
+            "risk_state": self.risk_state.to_json(),
         }
         STATE_FILE.write_text(json.dumps(payload, indent=2))
 
@@ -283,9 +290,9 @@ def run_backtest(symbols: list[str], ticks: int = 60, starting_cash: float | Non
     labeled, because random-walk results say nothing about real performance."""
     if starting_cash is None:
         starting_cash = STATE.settings.budget
-    from .broker import PaperBroker as _PB
-    from .strategy import MomentumStrategy as _MS
-    from .models import Quote as _Quote
+    from broker import PaperBroker as _PB
+    from strategy import MomentumStrategy as _MS
+    from models import Quote as _Quote
 
     history = _fetch_backtest_history(symbols, ticks)
     if history:
@@ -361,6 +368,16 @@ MAX_LEDGER_READ = 5000
 BENCHMARK_MAX_SYMBOLS = 10
 _benchmark_cache: dict[tuple, tuple[float, dict]] = {}
 BENCHMARK_CACHE_SECONDS = 300.0
+
+
+def _config_key_of(config: dict) -> str:
+    """Grouping key from a stored fingerprint (trades outlive settings)."""
+    if not config:
+        return "unknown"
+    return (f"{config.get('horizon', '?')}/{config.get('strategy', '?')}"
+            f"/gate{config.get('min_confirmations', '?')}"
+            f"/+{config.get('lock_profit_pct', 0):g}-{config.get('stop_loss_pct', 0):g}"
+            f"/{config.get('sizing', '?')}")
 
 
 def _metric_float(value) -> float:
@@ -500,6 +517,77 @@ def _benchmark_from_ledger(trades: list[dict], symbols: list[str]) -> dict:
     }
 
 
+# Hard ceiling on how many individual trades an API response may carry. The
+# ledger is append-only and grows for the life of the account.
+MAX_TRADES_RESPONSE = 200
+
+
+def closed_trades_report(window: str = "all", limit: str = "50") -> dict:
+    """Individual closed round trips, newest first.
+
+    Aggregates answer "is this working"; this answers "which trades, and why
+    did each one end" — the question you would otherwise open a JSONL for.
+    """
+    if window not in ("session", "day", "week", "all"):
+        window = "all"
+    try:
+        count = max(1, min(MAX_TRADES_RESPONSE, int(limit)))
+    except (TypeError, ValueError):
+        count = 50
+    trades = _closed_trades(window)
+    return {
+        "window": window,
+        "total_in_window": len(trades),
+        "returned": min(count, len(trades)),
+        "trades": list(reversed(trades))[:count],
+    }
+
+
+def performance_report(window: str = "all", min_trades: int = 1) -> dict:
+    """Configuration leaderboard: which setups produced which outcomes.
+
+    Groups every closed trade by the configuration it was opened under, so the
+    question "what works" is answered from recorded evidence rather than
+    memory. Ranked by expectancy, but a config with three trades is noise —
+    `sample_warning` is carried through per row and the UI must show it.
+    """
+    if window not in ("session", "day", "week", "all"):
+        window = "all"
+    trades = _closed_trades(window)
+    rows = []
+    for key, group in compute_metrics(trades).get("by_config", {}).items():
+        if group["total_trades"] < max(1, min_trades):
+            continue
+        sample = next((t for t in trades if t.get("config_key") == key), {})
+        rows.append({
+            "config_key": key,
+            "config": sample.get("config", {}),
+            "trades": group["total_trades"],
+            "expectancy": group["expectancy_per_trade"],
+            "net_pnl": group["net_pnl"],
+            "win_rate": group["win_rate"],
+            "profit_factor": group["profit_factor"],
+            "max_drawdown_pct": group["max_drawdown_pct"],
+            "fees_as_pct_of_gross": group["fees_as_pct_of_gross"],
+            "avg_hold_seconds": group["avg_hold_seconds"],
+            "sample_warning": group["sample_warning"],
+            "first_trade": min((t.get("opened_at", "") for t in trades
+                                if t.get("config_key") == key), default=""),
+            "last_trade": max((t.get("closed_at", "") for t in trades
+                               if t.get("config_key") == key), default=""),
+            "by_exit_reason": group.get("by_exit_reason", {}),
+        })
+    rows.sort(key=lambda r: r["expectancy"], reverse=True)
+    return {
+        "window": window,
+        "configs": rows,
+        "total_trades": len(trades),
+        "distinct_configs": len(rows),
+        "current_config_key": STATE.settings.config_key(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def metrics_report(window: str = "session") -> dict:
     """Everything /api/metrics returns: metrics, benchmark, strategy return."""
     if window not in ("session", "day", "week", "all"):
@@ -534,6 +622,22 @@ def metrics_report(window: str = "session") -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Live-mode hard limits
+# ---------------------------------------------------------------------------
+# Currencies whose balance this build can actually read and check an order
+# against (see LongbridgeBroker.cash_by_currency). An order settling in any
+# other currency is BLOCKED live: we cannot prove it is covered by cash, and an
+# uncovered foreign-currency order is how a cash account quietly ends up
+# borrowing. Adding a currency here means adding real balance handling for it.
+LIVE_ENFORCED_CURRENCIES = {"USD", "SGD"}
+
+# How long a synced live portfolio is reused before re-hitting the broker API.
+# The guard runs per proposal; without this, one tick of 5 proposals would cost
+# 10+ account calls and run into Longbridge's trade-API rate limit.
+LIVE_SYNC_TTL_SECONDS = 3.0
+
+
 class TradingEngine:
     # Quotes shown in the UI Market Scan panel. With full Longbridge discovery
     # the universe can exceed 30,000 symbols — serializing every quote into
@@ -560,7 +664,7 @@ class TradingEngine:
         return selected
 
     def status(self) -> dict:
-        from .broker import LB_STATUS
+        from broker import LB_STATUS
         broker = STATE.paper_broker if STATE.settings.trading_mode is TradingMode.PAPER else (STATE.live_broker or STATE.paper_broker)
         portfolio = broker.portfolio()
         display_quotes = self._display_quotes(portfolio)
@@ -590,12 +694,18 @@ class TradingEngine:
             # None = gate inactive (sim mode trades 24/7); dict = per-market open flag
             "markets_open": markets_status(STATE.settings.markets) if LB_STATUS["connected"] else None,
             "ai_status": AI_STATUS.as_dict(),
+            "viability": self.viability_summary(),
         }
 
     def tick(self) -> dict:
-        from .broker import LB_STATUS
+        from broker import LB_STATUS
         with STATE.lock:
             broker = STATE.broker()
+            # Fresh tick: the exchange positions are about to be re-synced, so
+            # last tick's in-flight reservations are either reflected there now
+            # or were never filled.
+            TradingEngine._live_pending_notional = 0.0
+            TradingEngine._live_sync_at = 0.0
             # Market-hours gate — only with real data. Sim prices move 24/7,
             # so the simulator stays testable at any hour.
             gate = LB_STATUS["connected"]
@@ -655,7 +765,8 @@ class TradingEngine:
                     if STATE.settings.approval_mode is ApprovalMode.AUTO:
                         self.execute(proposal)
 
-                signals, proposals = STATE.strategy.scan(STATE.settings, quotes, broker.portfolio())
+                signals, proposals = STATE.strategy.scan(
+                    STATE.settings, quotes, self._tradable_view(broker.portfolio()))
                 STATE.signals = signals
                 for sig in signals:
                     STATE.audit(AuditEventType.SIGNAL, symbol=sig.symbol, action=sig.action, score=round(sig.score, 3), price=sig.price)
@@ -671,7 +782,8 @@ class TradingEngine:
             else:
                 # Session not running — refresh signals for display only.
                 # Never call the paid AI here; its proposals would be discarded.
-                STATE.signals = STATE.strategy.scan_signals_only(STATE.settings, quotes, broker.portfolio())
+                STATE.signals = STATE.strategy.scan_signals_only(
+                    STATE.settings, quotes, ENGINE._tradable_view(broker.portfolio()))
             STATE.save()
             return self.status()
 
@@ -679,18 +791,33 @@ class TradingEngine:
         with STATE.lock:
             settings = STATE.settings
             was_enabled = settings.strategy_enabled
+            # A horizon change swaps in that horizon's saved tuning. Values the
+            # client sent alongside it belong to the OUTGOING horizon, so they
+            # are ignored rather than written over the incoming profile.
+            switching = ("trading_horizon" in payload
+                         and payload["trading_horizon"] != settings.trading_horizon)
+            if switching:
+                settings.switch_horizon(payload["trading_horizon"])
+            from models import HORIZON_FIELDS
             for key in ("symbol", "markets", "universe", "budget", "duration_minutes", "max_scan_symbols",
                         "max_loss", "max_trade_value", "auto_tick_enabled", "tick_interval_seconds",
                         "allow_live_trading", "stop_at_end", "strategy_enabled",
                         "target_profit", "target_profit_per_hour", "lock_profit_pct",
-                        "stop_loss_pct", "trailing_stop_pct", "ai_strategy_name"):
+                        "stop_loss_pct", "trailing_stop_pct", "ai_strategy_name",
+                        "enforce_trade_viability", "min_confirmations",
+                        "risk_per_trade_pct", "atr_stop_multiple", "use_atr_sizing",
+                        "max_concurrent_positions", "daily_budget",
+                        "daily_loss_limit", "cooldown_after_losses",
+                        "trading_horizon"):
+                if switching and key in HORIZON_FIELDS:
+                    continue
                 if key in payload:
                     setattr(settings, key, payload[key])
             if "trading_mode" in payload:
                 settings.trading_mode = TradingMode(payload["trading_mode"])
             if "approval_mode" in payload:
                 settings.approval_mode = ApprovalMode(payload["approval_mode"])
-            settings.normalized()
+            settings.normalized().sync_horizon_profile()
             if settings.strategy_enabled and not was_enabled:
                 settings.started_at = datetime.now(timezone.utc).isoformat()
                 STATE.begin_session()
@@ -748,6 +875,212 @@ class TradingEngine:
             STATE.save()
             return True
 
+    # ── Live-mode ownership + budget ceiling ─────────────────────────────
+    # In LIVE mode the portfolio is synced from the exchange, so it contains
+    # whatever else is in the account. Two rules follow, and neither can be
+    # overridden by settings:
+    #   1. The tool only ever sells what the tool itself bought.
+    #   2. The tool never deploys more than `settings.budget` at cost.
+    # Both are enforced at execute(), the single chokepoint every order passes
+    # through, so mechanical exits, the strategy, the AI and manual approval
+    # are all covered by the same code.
+    #
+    # PAPER mode is deliberately exempt: the paper account is entirely the
+    # tool's, its starting cash already IS the budget, and applying a second
+    # ceiling there would change paper behaviour and invalidate a baseline
+    # measured before this change.
+
+    # Time source for the day-and-cooldown logic in risk.py. Normally wall
+    # clock; the replay harness overrides it with the current bar's timestamp
+    # so a year of history rolls days properly and a 30-minute cooldown does
+    # not swallow an entire run that completes in seconds.
+    simulated_now: "datetime | None" = None
+
+    @classmethod
+    def _now(cls) -> datetime:
+        return cls.simulated_now or datetime.now(timezone.utc)
+
+    _live_sync_at: float = 0.0
+    # Notional submitted live this tick but not yet visible in the synced
+    # exchange positions. Without it, several buys in one tick each see the
+    # same "deployed" figure and can collectively overshoot the budget.
+    _live_pending_notional: float = 0.0
+
+    def _live_portfolio(self):
+        """Exchange-synced portfolio, re-fetched at most every few seconds."""
+        broker = STATE.broker()
+        now = time.monotonic()
+        if now - self._live_sync_at >= LIVE_SYNC_TTL_SECONDS:
+            self._live_sync_at = now
+            return broker.portfolio()
+        return getattr(broker, "_portfolio", None) or broker.portfolio()
+
+    def _tool_positions(self, portfolio) -> dict:
+        """Positions the tool itself opened.
+
+        `entry_qty` is only ever set by one of our own buy fills, so a synced
+        exchange position the tool never touched has entry_qty == 0.
+        """
+        if STATE.settings.trading_mode is TradingMode.PAPER:
+            return dict(portfolio.positions)
+        return {s: p for s, p in portfolio.positions.items() if p.entry_qty > 0}
+
+    def _deployed_cost_basis(self, portfolio) -> float:
+        """What the tool currently has deployed, at cost."""
+        total = 0.0
+        for position in self._tool_positions(portfolio).values():
+            if position.quantity <= 0:
+                continue
+            basis = position.entry_price if position.entry_price > 0 else position.avg_cost
+            total += basis * position.quantity
+        return round(total, 2)
+
+    def _budget_room(self, portfolio) -> float:
+        """Budget still available to deploy, at cost, including in-flight buys.
+
+        Order notionals are counted at face value in their own currency. With
+        SGD worth less than USD that is conservative — it exhausts the budget
+        sooner than a true FX conversion would, never later.
+        """
+        budget = STATE.settings.budget
+        if budget <= 0:
+            return 0.0
+        used = self._deployed_cost_basis(portfolio) + self._live_pending_notional
+        return round(max(0.0, budget - used), 2)
+
+    # ── Trade viability ──────────────────────────────────────────────────
+    # A position too small to clear its own brokerage costs loses money even
+    # when it reaches its profit target. That is arithmetic, not strategy, and
+    # it is checked before the order is sent — in BOTH paper and live, because
+    # a structurally-losing paper trade corrupts the baseline being measured.
+
+    def _slippage_bps(self) -> float:
+        from broker import PAPER_SLIPPAGE_BPS
+        return PAPER_SLIPPAGE_BPS
+
+    def _reference_price(self) -> float:
+        """A representative price for settings-level estimates, taken from live
+        quotes when there are any so the figure reflects what is actually being
+        scanned rather than an invented number."""
+        from fees import REFERENCE_PRICE
+        prices = sorted(q.price for q in STATE.last_quotes if q.price > 0)
+        if not prices:
+            return REFERENCE_PRICE
+        return prices[len(prices) // 2]
+
+    def viability_summary(self) -> dict:
+        """Are the CURRENT settings capable of making money? Surfaced in the
+        status payload and the startup banner — the question should be
+        answerable before trading, not after."""
+        from fees import assess_trade
+        settings = STATE.settings
+        notional = settings.max_trade_value
+        price = self._reference_price()
+        markets = settings.markets or ["US"]
+        per_market = {}
+        for market in markets:
+            verdict = assess_trade(market, notional, price,
+                                   settings.lock_profit_pct, self._slippage_bps())
+            per_market[market] = verdict.as_dict()
+        assessable = [v for v in per_market.values() if v["assessable"]]
+        return {
+            "per_market": per_market,
+            "reference_price": round(price, 2),
+            "trade_value": notional,
+            "target_pct": settings.lock_profit_pct,
+            "enforced": settings.enforce_trade_viability,
+            # Any market that cannot pay for itself is worth shouting about.
+            "any_unviable": any(not v["viable"] for v in assessable),
+        }
+
+    def _viability_denial(self, proposal: OrderProposal) -> str | None:
+        """Reason to refuse this buy on cost grounds, or None."""
+        if not STATE.settings.enforce_trade_viability:
+            return None
+        from fees import assess_trade
+        notional = proposal.quantity * proposal.price
+        if notional <= 0 or proposal.price <= 0:
+            return None
+        verdict = assess_trade(market_of(proposal.symbol), notional, proposal.price,
+                               STATE.settings.lock_profit_pct, self._slippage_bps())
+        if not verdict.assessable or verdict.viable:
+            return None
+        return (f"BLOCKED (unprofitable by construction): {proposal.symbol} at "
+                f"${notional:,.2f} — {verdict.reason}")
+
+    def _tradable_view(self, portfolio):
+        """What the strategy and the AI are allowed to see and act on.
+
+        In live mode this hides positions the tool did not open and caps cash
+        at the remaining budget, so no sell proposal is ever generated for
+        someone else's shares and no buy is sized against money the tool is
+        not allowed to spend. execute() re-checks both — this just stops the
+        proposals being created in the first place.
+        """
+        if STATE.settings.trading_mode is TradingMode.PAPER:
+            return portfolio
+        return Portfolio(
+            cash=min(portfolio.cash, self._budget_room(portfolio)),
+            realized_pnl=portfolio.realized_pnl,
+            positions=self._tool_positions(portfolio),
+            last_prices=portfolio.last_prices,
+        )
+
+    def _live_guard(self, proposal: OrderProposal) -> str | None:
+        """Reason to refuse this live order, or None to let it through.
+        May shrink the quantity to fit the remaining budget."""
+        settings = STATE.settings
+        currency = currency_of(proposal.symbol)
+        if currency not in LIVE_ENFORCED_CURRENCIES:
+            return (f"BLOCKED: {proposal.symbol} settles in "
+                    f"{currency or 'an unrecognised currency'}. Live orders are limited to "
+                    f"{'/'.join(sorted(LIVE_ENFORCED_CURRENCIES))} — the balance for anything "
+                    "else cannot be verified, so the order cannot be proven cash-covered.")
+
+        portfolio = self._live_portfolio()
+        position = portfolio.positions.get(proposal.symbol)
+
+        if proposal.side is Side.SELL:
+            if position is None or position.entry_qty <= 0:
+                return ("BLOCKED: this position was not opened by the tool. It never sells "
+                        "shares it did not buy.")
+            if proposal.quantity > position.quantity + 1e-9:
+                return (f"BLOCKED: tried to sell {proposal.quantity:g} but the tool only holds "
+                        f"{position.quantity:g}.")
+            return None
+
+        # ── BUY ──────────────────────────────────────────────────────────
+        if settings.budget <= 0:
+            return "BLOCKED: budget is 0. Set a budget before enabling live trading."
+        if proposal.price <= 0:
+            return "BLOCKED: no valid price for this symbol."
+
+        room = self._budget_room(portfolio)
+        if room <= 0:
+            return (f"BLOCKED: budget ${settings.budget:,.2f} is fully deployed "
+                    f"(${self._deployed_cost_basis(portfolio):,.2f} at cost). "
+                    "No new buys until something is sold.")
+
+        notional = proposal.quantity * proposal.price
+        if notional > room:
+            fitted = int(room / proposal.price)     # whole shares, always rounds down
+            if fitted <= 0:
+                return (f"BLOCKED: only ${room:,.2f} of budget left — not enough for one share "
+                        f"of {proposal.symbol} at ${proposal.price:,.2f}.")
+            proposal.quantity = float(fitted)
+            notional = fitted * proposal.price
+            proposal.reason += f" [trimmed to ${notional:,.2f} to stay inside the budget]"
+
+        # Second, independent bound: real balance in the order's own currency.
+        broker = STATE.broker()
+        available = 0.0
+        if hasattr(broker, "cash_by_currency"):
+            available = broker.cash_by_currency().get(currency, 0.0)
+        if notional > available:
+            return (f"BLOCKED: order needs {currency} {notional:,.2f} but only "
+                    f"{currency} {available:,.2f} is available. No borrowing.")
+        return None
+
     def execute(self, proposal: OrderProposal) -> None:
         # Hard guard: never trade options or on margin.
         # We only allow plain BUY (cash) or SELL (held position).
@@ -756,6 +1089,45 @@ class TradingEngine:
             proposal.status = OrderStatus.FAILED
             proposal.error = "Rejected: only plain BUY/SELL of owned shares is permitted. No margin, no options."
             return
+
+        # Portfolio-level limits: concentration, daily budget, daily loss,
+        # loss-streak cooldown. Buys only — an exit must always be possible.
+        if proposal.side is Side.BUY:
+            portfolio = STATE.broker().portfolio()
+            open_count = sum(1 for p in self._tool_positions(portfolio).values()
+                             if p.quantity > 0)
+            denial = check_limits(STATE.settings, open_count, STATE.risk_state,
+                                  proposal.symbol, proposal.quantity * proposal.price,
+                                  self._now())
+            if denial is not None:
+                proposal.status = OrderStatus.FAILED
+                proposal.error = denial
+                STATE.audit(AuditEventType.FAIL, symbol=proposal.symbol,
+                            side=proposal.side.value, guard="portfolio_limits",
+                            error=denial)
+                return
+
+        # Cost floor: never open a position that loses money when it wins.
+        # Applies in paper and live alike.
+        if proposal.side is Side.BUY:
+            denial = self._viability_denial(proposal)
+            if denial is not None:
+                proposal.status = OrderStatus.FAILED
+                proposal.error = denial
+                STATE.audit(AuditEventType.FAIL, symbol=proposal.symbol,
+                            side=proposal.side.value, guard="trade_viability",
+                            error=denial)
+                return
+
+        # Live-only ownership + budget ceiling. Runs before anything is sent.
+        if STATE.settings.trading_mode is TradingMode.LIVE:
+            denial = self._live_guard(proposal)
+            if denial is not None:
+                proposal.status = OrderStatus.FAILED
+                proposal.error = denial
+                STATE.audit(AuditEventType.FAIL, symbol=proposal.symbol,
+                            side=proposal.side.value, guard="live_limits", error=denial)
+                return
 
         proposal.status = OrderStatus.APPROVED
         try:
@@ -775,7 +1147,21 @@ class TradingEngine:
         except Exception as exc:
             proposal.status = OrderStatus.FAILED
             proposal.error = str(exc)
+        # Anything that reached the exchange consumes budget from this moment,
+        # even if the fill is still pending — otherwise the next proposal in
+        # the same tick sees stale "deployed" and the pair overshoots.
+        if (STATE.settings.trading_mode is TradingMode.LIVE
+                and proposal.side is Side.BUY
+                and proposal.status in (OrderStatus.FILLED, OrderStatus.APPROVED)):
+            TradingEngine._live_pending_notional += proposal.quantity * proposal.price
+
         if proposal.status is OrderStatus.FILLED:
+            if proposal.side is Side.BUY:
+                # Counts toward the daily budget at fill time. Cumulative, so
+                # recycling the same capital consumes the allowance again.
+                STATE.risk_state.record_buy(proposal.symbol,
+                                            proposal.quantity * proposal.price,
+                                            self._now())
             self._record_round_trip(proposal)
             event = AuditEventType.FILL
         elif proposal.status is OrderStatus.APPROVED:
@@ -807,6 +1193,8 @@ class TradingEngine:
             "ema_trend": diag.ema_trend,
             "vol_surge": diag.vol_surge,
             "day_change_pct": diag.day_change_pct,
+            "atr": diag.atr,
+            "atr_pct": diag.atr_pct,
         }
 
     def _record_round_trip(self, proposal: OrderProposal) -> None:
@@ -814,10 +1202,18 @@ class TradingEngine:
         and on the SELL that takes the position flat emits one closed-trade
         record. Partial exits just accumulate on the Position."""
         try:
-            position = STATE.broker().portfolio().positions.get(proposal.symbol)
-            if position is None:
-                return
+            portfolio = STATE.broker().portfolio()
+            position = portfolio.positions.get(proposal.symbol)
             mode = STATE.settings.trading_mode.value
+            if position is None:
+                if proposal.side is not Side.BUY:
+                    return
+                # Live buy the exchange sync hasn't caught up with yet. Create
+                # the local record now: it is what marks the position as
+                # tool-owned, and without it the position would be invisible to
+                # both the ownership rule and the budget ceiling.
+                position = Position(symbol=proposal.symbol)
+                portfolio.positions[proposal.symbol] = position
 
             if proposal.side is Side.BUY:
                 if not position.entry_strategy:
@@ -826,13 +1222,27 @@ class TradingEngine:
                     position.entry_diagnostics = diag
                     position.entry_strategy = STATE.settings.ai_strategy_name
                     position.entry_mode = mode
+                    position.entry_config = STATE.settings.config_fingerprint()
+                # Fix the stop at entry from the symbol's own volatility, so a
+                # quiet name and a violent one don't get the same 2% leash.
+                # Only on the opening fill — adding to a position must not
+                # loosen the stop that is already protecting it.
+                if position.stop_price <= 0:
+                    entry_atr = float(position.entry_diagnostics.get("atr", 0) or 0)
+                    if entry_atr > 0:
+                        distance = entry_atr * STATE.settings.atr_stop_multiple
+                        position.stop_price = round(max(0.0, proposal.price - distance), 6)
                 if not position.opened_at:
-                    # Live fills don't run through PaperBroker's accounting, so
-                    # the entry figures are reconstructed from the proposal.
-                    position.opened_at = datetime.now(timezone.utc).isoformat()
+                    # Engine-owned so the replay's simulated clock applies;
+                    # wall clock in production.
+                    position.opened_at = self._now().isoformat()
                 if position.entry_qty <= 0:
                     position.entry_qty = proposal.quantity
                     position.entry_price = proposal.price
+                if mode != TradingMode.PAPER.value:
+                    # PaperBroker accumulates its own fee; live has to take the
+                    # real charge off the fill.
+                    position.fees_paid = round(position.fees_paid + proposal.fee, 6)
                 return
 
             # ── SELL ──────────────────────────────────────────────────────
@@ -841,6 +1251,7 @@ class TradingEngine:
                 position.exit_qty = round(position.exit_qty + proposal.quantity, 6)
                 position.exit_proceeds = round(
                     position.exit_proceeds + proposal.quantity * proposal.price, 6)
+                position.fees_paid = round(position.fees_paid + proposal.fee, 6)
             if position.quantity > 1e-9 or position.entry_qty <= 0:
                 return   # partial exit, or nothing was ever recorded as opened
 
@@ -851,8 +1262,7 @@ class TradingEngine:
             if position.opened_at:
                 try:
                     opened = datetime.fromisoformat(position.opened_at)
-                    hold_seconds = round(
-                        (datetime.now(timezone.utc) - opened).total_seconds(), 2)
+                    hold_seconds = round((self._now() - opened).total_seconds(), 2)
                 except ValueError:
                     hold_seconds = 0.0
             exit_price = (position.exit_proceeds / position.exit_qty
@@ -860,7 +1270,7 @@ class TradingEngine:
             record = {
                 "symbol": proposal.symbol,
                 "opened_at": position.opened_at,
-                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "closed_at": self._now().isoformat(),
                 "hold_seconds": hold_seconds,
                 "entry_price": round(position.entry_price, 6),
                 "exit_price": round(exit_price, 6),
@@ -874,12 +1284,25 @@ class TradingEngine:
                 "mode": position.entry_mode or mode,
                 "entry_score": round(position.entry_score, 4),
                 "entry_diagnostics": position.entry_diagnostics,
-                # Live fees are charged by the broker and not returned by the
-                # order API, so live records model zero fees. Never read a live
-                # net_pnl as if it were fee-inclusive.
-                "fees_modelled": position.entry_mode == TradingMode.PAPER.value,
+                # What configuration produced this trade — the basis for
+                # comparing setups against each other later.
+                "config": position.entry_config,
+                "config_key": _config_key_of(position.entry_config),
+                # Where the fee figure came from, so net_pnl is never read with
+                # more confidence than it deserves:
+                #   actual   — billed by the broker (charge_detail)
+                #   modelled — computed from fees.py (paper)
+                #   unknown  — live fill the broker reported no charges for
+                "fees_source": (
+                    "modelled" if position.entry_mode == TradingMode.PAPER.value
+                    else ("actual" if fees > 0 else "unknown")
+                ),
             }
             STATE.log_closed_trade(record)
+            # Feeds the daily loss limit and the consecutive-loss cooldown.
+            STATE.risk_state.record_close(proposal.symbol, record["net_pnl"],
+                                          STATE.settings.cooldown_after_losses,
+                                          self._now())
             position.reset_round_trip()
         except Exception as exc:
             # The ledger must never be able to break order execution.
@@ -907,6 +1330,12 @@ class TradingEngine:
     def _session_expired(self) -> bool:
         if STATE.settings.started_at is None:
             STATE.settings.started_at = datetime.now(timezone.utc).isoformat()
+            return False
+        if STATE.settings.is_swing:
+            # Swing sessions span days by definition, so a duration timer makes
+            # no sense — and letting it fire would hand stop_at_end a mandate to
+            # flatten multi-day positions at an arbitrary moment. End a swing
+            # session manually.
             return False
         started = datetime.fromisoformat(STATE.settings.started_at)
         return datetime.now(timezone.utc) >= started + timedelta(minutes=STATE.settings.duration_minutes)
@@ -1007,7 +1436,8 @@ class TradingEngine:
     def _close_positions_at_end(self, quotes) -> None:
         portfolio = STATE.broker().portfolio()
         latest = {q.symbol: q for q in quotes}
-        for symbol, position in portfolio.positions.items():
+        # Stop-at-end flattens only what the tool opened.
+        for symbol, position in self._tool_positions(portfolio).items():
             if position.quantity <= 0 or symbol not in latest:
                 continue
             quote = latest[symbol]
@@ -1020,6 +1450,18 @@ class TradingEngine:
 
     # How many top movers get real candle indicators each tick (plus all
     # held positions). Kept small — each one costs a quote-API call.
+    # Candle horizon per trading mode. This is what actually makes swing mode
+    # swing: on 1-min bars EMA9/EMA21 measure 9 and 21 MINUTES, so holding for
+    # days off those signals is a horizon mismatch. On daily bars the same
+    # indicators measure 9 and 21 days.
+    #   (period, count, refresh seconds)
+    CANDLE_SPEC = {
+        "intraday": ("Min_1", 120, 55.0),
+        # Daily bars only change once a day; re-fetching every minute would
+        # burn API calls for identical data.
+        "swing": ("Day", 250, 900.0),
+    }
+
     CANDLE_CANDIDATES = 15
     _candle_fetched_at: dict[str, float] = {}
     CANDLE_REFRESH_SECONDS = 55.0
@@ -1039,11 +1481,16 @@ class TradingEngine:
         )
         targets = list(dict.fromkeys(held + [q.symbol for q in movers[: self.CANDLE_CANDIDATES]]))
         now = time.monotonic()
+        period, count, refresh = self.CANDLE_SPEC.get(
+            STATE.settings.trading_horizon, self.CANDLE_SPEC["intraday"])
+        # The replay harness overrides the refresh interval to 0 so indicators
+        # move bar to bar; honour that.
+        refresh = min(refresh, self.CANDLE_REFRESH_SECONDS)
         for symbol in targets:
-            if now - self._candle_fetched_at.get(symbol, 0.0) < self.CANDLE_REFRESH_SECONDS:
+            if now - self._candle_fetched_at.get(symbol, 0.0) < refresh:
                 continue
             try:
-                candles = broker.candles(symbol, period="Min_1", count=120)
+                candles = broker.candles(symbol, period=period, count=count)
             except Exception:
                 continue
             self._candle_fetched_at[symbol] = now
@@ -1065,12 +1512,19 @@ class TradingEngine:
         lock_pct = settings.lock_profit_pct
         stop_pct = settings.stop_loss_pct
         trail_pct = settings.trailing_stop_pct
-        if lock_pct <= 0 and stop_pct <= 0 and trail_pct <= 0:
+        # A position can carry an absolute ATR stop even when every percentage
+        # setting is 0, so the presence of one has to keep this loop alive.
+        portfolio_positions = STATE.broker().portfolio().positions
+        has_atr_stop = any(p.stop_price > 0 and p.quantity > 0
+                           for p in portfolio_positions.values())
+        if lock_pct <= 0 and stop_pct <= 0 and trail_pct <= 0 and not has_atr_stop:
             return []
+        # Tool-owned positions only: a stop loss must never reach into shares
+        # the user bought themselves.
         portfolio = STATE.broker().portfolio()
         latest = {q.symbol: q for q in quotes}
         proposals: list[OrderProposal] = []
-        for symbol, position in portfolio.positions.items():
+        for symbol, position in self._tool_positions(portfolio).items():
             if position.quantity <= 0 or position.avg_cost <= 0:
                 continue
             quote = latest.get(symbol)
@@ -1082,7 +1536,22 @@ class TradingEngine:
             if lock_pct > 0 and gain_pct >= lock_pct:
                 reason = f"Profit lock: +{gain_pct:.2f}% ≥ {lock_pct:.2f}% threshold."
                 tag = "profit_lock"
-            elif stop_pct > 0 and gain_pct <= -stop_pct:
+            elif position.stop_price > 0 and quote.price <= position.stop_price:
+                # ATR stop fixed at entry — takes precedence over the flat
+                # percentage, which stays as the fallback below.
+                # A stop is a trigger, not a guaranteed fill price: exits are
+                # only evaluated on a tick, so an overnight gap opens the
+                # position below the stop and it sells there. Swing mode holds
+                # overnight, so this is its defining risk — name it in the
+                # record rather than letting the loss look like slippage.
+                slip = (position.stop_price - quote.price) / position.stop_price * 100
+                gapped = (f" GAPPED {slip:.2f}% THROUGH the stop — "
+                          f"filled below it, not at it." if slip > 0.5 else "")
+                reason = (f"STOP LOSS: ${quote.price:.2f} at or below the "
+                          f"${position.stop_price:.2f} ATR stop set at entry "
+                          f"({gain_pct:.2f}%).{gapped}")
+                tag = "stop_loss"
+            elif position.stop_price <= 0 and stop_pct > 0 and gain_pct <= -stop_pct:
                 reason = f"STOP LOSS: {gain_pct:.2f}% ≤ -{stop_pct:.2f}% threshold."
                 tag = "stop_loss"
             elif trail_pct > 0 and position.peak_price > position.avg_cost:
@@ -1218,7 +1687,7 @@ def quote_refresh_loop() -> None:
                 priority += [sig.symbol for sig in STATE.signals]
                 priority += [q.symbol for q in STATE.last_quotes]
                 symbols = list(dict.fromkeys(priority))[:200]
-                from .broker import LB_STATUS as _LBS
+                from broker import LB_STATUS as _LBS
                 if _LBS["connected"]:
                     # Frozen markets don't need refreshing
                     open_mkts = set(open_markets(["US", "HK", "SG"]))
@@ -1231,7 +1700,8 @@ def quote_refresh_loop() -> None:
                 STATE.last_quote = quotes[0] if quotes else None
                 # Re-run signals (read-only — no proposals, no AI call) so
                 # rankings stay fresh without burning API tokens
-                STATE.signals = STATE.strategy.scan_signals_only(STATE.settings, quotes, broker.portfolio())
+                STATE.signals = STATE.strategy.scan_signals_only(
+                    STATE.settings, quotes, ENGINE._tradable_view(broker.portfolio()))
                 STATE.last_tick_at = datetime.now(timezone.utc).isoformat()
                 sse_broadcast(ENGINE.status())
         except Exception:
@@ -1283,6 +1753,14 @@ class Handler(BaseHTTPRequestHandler):
             "/api/metrics": lambda: self._json(
                 metrics_report(parse_qs(parsed.query).get("window", ["session"])[0])
             ),
+            "/api/performance": lambda: self._json(performance_report(
+                parse_qs(parsed.query).get("window", ["all"])[0],
+                int(parse_qs(parsed.query).get("min_trades", ["1"])[0] or 1),
+            )),
+            "/api/trades": lambda: self._json(closed_trades_report(
+                parse_qs(parsed.query).get("window", ["all"])[0],
+                parse_qs(parsed.query).get("limit", ["50"])[0],
+            )),
             "/api/backtest/last": lambda: self._serve_jsonl_tail(BACKTEST_LOG, 1),
             "/api/ai/status": lambda: self._json({"ai": AI_STATUS.as_dict()}),
         }
@@ -1438,8 +1916,8 @@ def _startup_banner() -> None:
     """Print exactly what is connected so nobody has to guess whether the app
     is using real Longbridge data or the local simulator."""
     import os
-    from .ai_strategy import PROVIDERS
-    from .broker import LB_STATUS
+    from ai_strategy import PROVIDERS
+    from broker import LB_STATUS
 
     def key_state(name: str) -> str:
         v = os.environ.get(name, "")
@@ -1466,6 +1944,52 @@ def _startup_banner() -> None:
         else:
             print(f"AI brain:   {provider} selected but {env_key} is MISSING —")
             print("            every AI call will fail and fall back to momentum rules")
+    from broker import PAPER_FEE_PER_TRADE, PAPER_SLIPPAGE_BPS
+    from fees import unverified_markets
+    if PAPER_FEE_PER_TRADE is not None:
+        print(f"Paper fees: FLAT ${PAPER_FEE_PER_TRADE:.2f}/order override "
+              f"(PAPER_FEE_PER_TRADE) — will not match a real bill")
+    else:
+        unverified = unverified_markets()
+        print(f"Paper fees: real per-market schedules + {PAPER_SLIPPAGE_BPS:.0f}bps slippage")
+        if unverified:
+            print(f"  {', '.join(unverified)} fees are UNVERIFIED estimates — "
+                  f"run `python3 calibrate_fees.py`")
+
+    horizon = STATE.settings.trading_horizon
+    period, count, _ = TradingEngine.CANDLE_SPEC.get(horizon, TradingEngine.CANDLE_SPEC["intraday"])
+    if horizon == "swing":
+        print(f"Horizon:    SWING — {period} candles, positions held overnight, "
+              f"session does not auto-expire")
+    else:
+        print(f"Horizon:    INTRADAY — {period} candles, session ends after "
+              f"{STATE.settings.duration_minutes} min")
+
+    # Can the current settings make money at all? Answer it up front.
+    summary = ENGINE.viability_summary()
+    target = summary["target_pct"]
+    if target <= 0:
+        costs = ", ".join(f"{m} {v['breakeven_pct']:.2f}%"
+                          for m, v in summary["per_market"].items())
+        print(f"Viability:  no profit target set (lock_profit_pct = 0)")
+        print(f"  round-trip cost to beat at ${summary['trade_value']:,.0f}/trade: {costs}")
+    elif summary["any_unviable"]:
+        print(f"Viability:  ⚠ UNPROFITABLE BY CONSTRUCTION at "
+              f"${summary['trade_value']:,.0f}/trade, target {target:.2f}%")
+        for market, v in summary["per_market"].items():
+            if not v["viable"]:
+                floor = v["min_viable_notional"]
+                fix = (f"raise trade value to ~${floor:,.0f}"
+                       if floor > 0 else "no trade size works — raise the target")
+                print(f"  {market}: costs {v['breakeven_pct']:.2f}% > target "
+                      f"{target:.2f}% → a win nets {v['net_edge_pct']:+.2f}%  ({fix})")
+        print("  Buys are BLOCKED while this holds."
+              if summary["enforced"] else
+              "  Enforcement is OFF — these trades will be placed anyway.")
+    else:
+        edges = ", ".join(f"{m} {v['net_edge_pct']:+.2f}%"
+                          for m, v in summary["per_market"].items())
+        print(f"Viability:  ok — a winning trade nets {edges} after costs")
     print("─" * 62, flush=True)
 
 

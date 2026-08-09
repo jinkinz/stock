@@ -13,11 +13,11 @@ deliberately switch on live trading (two separate switches).
 pip install longbridge
 
 # 2. Fill in your credentials (see section 2)
-open trading_tool/.env
+open .env
 
 # 3. Run
 cd /Users/squallchu/stock
-python3 -m trading_tool.app
+python3 app.py
 
 # 4. Open the dashboard
 open http://127.0.0.1:8765
@@ -40,9 +40,9 @@ any numbers you see — without Longbridge the prices are a **random-walk simula
 
 ---
 
-## 2. Credentials Setup (`trading_tool/.env`)
+## 2. Credentials Setup (`.env`)
 
-The file lives at `trading_tool/.env` (the loader also checks the folder you run
+The file lives at `.env` (the loader also checks the folder you run
 from, and `~/.env`).
 
 ### Longbridge (market data + live trading)
@@ -191,6 +191,175 @@ The same data is available at `GET /api/metrics?window=session|day|week|all`,
 which additionally returns the metrics broken down by exit reason and by AI
 strategy style.
 
+### 5.0 Horizon — intraday or swing
+
+The **Horizon** setting is the single most consequential choice in the app,
+because it decides whether your budget can clear its own trading costs.
+
+| | Intraday | Swing |
+|---|---|---|
+| Candles | 1-minute | Daily |
+| EMA9 / EMA21 measure | 9 and 21 **minutes** | 9 and 21 **days** |
+| Session | ends after Duration; `stop at end` can flatten | never auto-expires; you end it |
+| Positions | closed same day | held overnight |
+| Typical target | 0.5–1% | 3%+ |
+
+**Why this matters more than any strategy setting.** On a small position, a
+round trip costs roughly 1.7% (US) or 1.05% (SG). An intraday target of 0.8%
+cannot clear that — the trade loses money when it wins, and the viability check
+will block it outright. A 3% swing target clears the same cost comfortably. If
+you are trading a few hundred dollars a day, swing is not one option among
+several; it is the only setting under which the app can trade at all.
+
+**The cost of holding overnight** is gaps. A stop is a *trigger*, not a
+guaranteed price: exits are only evaluated when the app looks at the market, so
+a stock that opens 8% below your stop is sold at that opening price, not at the
+stop. When this happens the trade record says so explicitly — you will see
+`GAPPED x% THROUGH the stop` in the exit reason rather than an unexplained
+oversized loss. This risk is real and cannot be engineered away; it is the price
+of the better economics.
+
+**One honest caveat.** In testing over a rising year, the strategy in swing mode
+returned about +2.7% while simply buying and holding the same symbols returned
++34%. It protects capital when prices fall and lags badly when they rise. Swing
+mode makes the *costs* work; it does not by itself make the strategy beat the
+market.
+
+### 5.1 Closed Trades — which trades, and why each one ended
+
+The Performance card tells you *whether* the strategy works. The **Closed
+Trades** card tells you *why*. It lists every completed round trip — entry and
+exit price, how long it was held, net P&L after fees, and the reason it closed.
+
+Above it, inside the Performance card, is a **"How trades ended"** breakdown:
+every exit reason with its trade count, win rate, total P&L and average per
+trade. This is the single most useful table in the app. It answers the question
+you cannot get from a P&L number alone: *is my stop loss protecting me, or is it
+bleeding me?*
+
+A pattern worth watching for: if `Stop loss` shows many trades and a large
+negative total while `Profit lock` shows a similar count and a similar positive
+total, your thresholds are simply trading noise back and forth and paying fees
+for the privilege. That is exactly what the replay measurements showed at small
+position sizes.
+
+Both views follow the same window selector, so the numbers always describe the
+same period. The list is capped at the 100 most recent trades in view; the full
+history is always in `state/trades_closed.jsonl`, and available at
+`GET /api/trades?window=…&limit=N`.
+
+### 5.1a The viability check — "unprofitable by construction"
+
+Before any of the numbers above matter, one question has to be answered: **can
+this trade size clear its own costs?**
+
+If your Profit Lock is 0.8% but a round trip costs 1.7% in fees and slippage,
+then hitting your target still leaves you down 0.9%. The trade loses money
+*when it wins*. No strategy, indicator or AI fixes that — it is arithmetic.
+
+The app now checks this before placing any buy, using your real configured
+trade size, profit target and the actual fee schedule for that market. When the
+numbers don't work you get a red banner at the top of the dashboard, a warning
+in the startup banner, and **new buys are blocked**. The message always tells
+you what would fix it — the trade size that *would* work, or the target you'd
+need instead.
+
+A worked example, same 0.8% target throughout:
+
+| Trade size | Round-trip cost (US) | A winning trade nets | Result |
+|---|---|---|---|
+| $250 | 1.70% | **−0.90%** | blocked |
+| $574 | 0.80% | ~0.00% | break-even threshold |
+| $25,000 | 0.22% | **+0.58%** | fine |
+
+Two ways out, and they're the two strategies open to you: **trade larger** (fees
+are mostly flat minimums, so cost as a percentage falls fast with size) or **aim
+further** — a 3% swing target clears the same 1.70% cost comfortably even at
+$250.
+
+If you set no Profit Lock at all, viability can't be judged and nothing is
+blocked — but the banner still tells you what a round trip costs, so you know
+what the strategy has to beat.
+
+To turn the block off (it stays visible either way), untick **enforce trade
+viability** in settings. Only do that if you're deliberately measuring the
+damage.
+
+### 5.1b The convergence gate — fewer, better trades
+
+Trading costs are **cost × frequency**, so the cheapest way to stop bleeding
+fees is to trade less often without giving up the good trades.
+
+The signal engine scores each symbol on a blend of factors, but a blend can hide
+disagreement: a big day move alone can drag the total over the line while trend,
+VWAP and volume all say no. The convergence gate counts five **independent**
+confirmations and requires them to agree:
+
+| Factor | Confirms when |
+|---|---|
+| **Trend** | EMA9 is above EMA21 |
+| **VWAP** | price is above the session VWAP |
+| **Volume** | recent volume is at or above the session average |
+| **Structure** | price sits in the top third of the day's range |
+| **Momentum** | short-term tick push is still positive |
+
+A factor with **no data** counts as *not* confirmed — absence of evidence never
+counts as evidence.
+
+Default is **5 of 5**. In testing across three different datasets this improved
+average profit per trade every time and cut trade count by around 40%. The most
+useful finding was that the "almost agreed" band — exactly 4 of 5 — was the
+*worst* performing group of all, losing money consistently across 45 trades.
+Near-misses are not weak buys; they are the expensive ones.
+
+You can relax it in settings if you want more activity, but expect more trades
+and more fees. Set it to **Off** to restore the old score-only behaviour.
+
+One honest caveat: this was measured on replayed history over a single market
+period, so treat it as a sensible default rather than a proven edge. The
+Performance card is what will tell you whether it holds up on real sessions.
+
+### 5.2 Fees — why paper P&L is not free money
+
+Paper fills are charged the same fee stack a real order pays. This matters more
+than it sounds: on a real SGX order of about SGD 500 the charges come to roughly
+**0.26%**, so a round trip costs about **0.5%**. Against a 0.8% profit-lock
+target, fees eat most of the edge before the strategy has done anything.
+
+Fees are modelled per market, per side:
+
+| Market | Source | Notes |
+|---|---|---|
+| **SG** | **Measured** | Derived from real contract notes on this account and reproduces them to the cent: commission 0, platform fee SGD 0.99, clearing 0.0325%, trading 0.0075%, GST 9% on (platform + clearing) |
+| **US** | *Estimate* | No real US fills existed to measure. Set deliberately on the expensive side — paper P&L is pessimistic rather than flattering |
+| **HK** | *Estimate* | Same caveat. HK live orders are blocked anyway |
+
+Anything marked *Estimate* is a placeholder, and the startup banner says so
+every time the app boots. To replace a guess with the truth:
+
+```bash
+python3 calibrate_fees.py
+```
+
+It reads the real charges Longbridge billed on your own filled orders and prints
+them line by line against what the model predicted. It is read-only — it places
+no orders and edits nothing. Correcting `fees.py` is deliberately a
+manual step, because a schedule silently rewritten from three orders is how you
+end up with a confident wrong number.
+
+Two directions of error, and they are not equal. **Over-charging is safe** — your
+paper results look worse than reality. **Under-charging is dangerous** — it makes
+a losing strategy look profitable. The calibration output calls out under-charging
+loudly and treats over-charging as acceptable.
+
+In live mode nothing is modelled at all: the real charge is read back off the
+filled order, and each closed trade records whether its fee figure was `actual`,
+`modelled`, or `unknown`.
+
+`PAPER_FEE_PER_TRADE` in `.env` overrides the whole model with a flat per-order
+charge. Useful for a quick what-if; it will not resemble a real bill, and the
+banner warns whenever it is active.
+
 ---
 
 ## 6. What the Safety Model Guarantees
@@ -201,6 +370,20 @@ strategy style.
 - **Mechanical exits fire before the AI acts each tick**: stop loss (default 2%),
   optional profit lock and trailing stop — the AI can exit earlier but can
   never hold past these thresholds
+- **In live mode, the tool can never deploy more than your Budget.** The limit
+  is the cost basis of what it currently holds plus anything in flight — not
+  your account balance. If your account holds $50,000 and Budget is $1,000, it
+  can have at most $1,000 at cost invested at any moment; an oversized order is
+  trimmed to fit and then refused. Selling frees the room up again.
+- **In live mode, it only ever sells what it bought.** Positions you opened
+  yourself, or that predate the tool, are invisible to it — no stop loss, no
+  profit lock, no AI sell, and they don't consume your Budget. The flip side:
+  if you open a position by hand, the tool's stop loss does **not** protect it.
+- **Live orders are limited to US and SG symbols** (USD and SGD), the
+  currencies whose balance the app can verify. An HK order is refused outright
+  rather than risk an uncovered position in a currency it cannot check.
+- Every live order is also checked against the real available cash in its own
+  currency. No borrowing, no FX overdraft.
 - Live orders need **two** independent switches (Live mode + Allow Live Orders)
 - Live orders are rounded to **whole shares and board-lot multiples** (HK
   stocks trade in lots of 100/500/…, looked up from exchange data automatically)
@@ -215,8 +398,9 @@ strategy style.
   can test at any hour.)
 - Manual proposals auto-expire after 5 minutes so a stale price is never filled
 - Rate limiter respects Longbridge's 30 calls / 30 s trade-API limit
-- Paper fills include a $1 fee + 0.05% slippage so paper P&L stays honest
-  (tune with `PAPER_FEE_PER_TRADE` / `PAPER_SLIPPAGE_BPS` in `.env`)
+- Paper fills are charged **real per-market brokerage fees** plus 0.05%
+  slippage, so paper P&L is not flattered by pretending trading is free (see
+  section 5.2)
 
 ---
 
@@ -232,7 +416,7 @@ strategy style.
 | Live order shows "fill not confirmed" | Limit order accepted but not yet executed | It may still fill — check the Longbridge app; the order expires at day end |
 | Nothing scans at night | All selected markets are closed (see sidebar "Markets" row) | Normal — trading resumes at market open. Holidays are not detected (quotes just stay frozen, which is safe) |
 | Disk/RAM growing | Fixed in this version (slim trade log, log rotation, capped payloads) | Delete old `state/trade_log.jsonl` / `state/audit_log.jsonl.old` if still large |
-| Port already in use | A previous instance is still running | `pkill -f trading_tool.app` then restart |
+| Port already in use | A previous instance is still running | `pkill -f 'python3 app.py'` then restart |
 
 ---
 

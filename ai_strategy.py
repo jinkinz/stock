@@ -26,8 +26,8 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from .models import OrderProposal, Portfolio, Settings, Side
-from .strategy import MomentumStrategy
+from models import OrderProposal, Portfolio, Settings, Side
+from strategy import MomentumStrategy
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Provider registry

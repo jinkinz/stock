@@ -9,7 +9,7 @@ Instead of trading one fixed ticker, the dashboard scans a selected market unive
 ## Run
 
 ```bash
-python3 -m trading_tool.app
+python3 app.py
 ```
 
 Then open:
@@ -29,7 +29,7 @@ python3 -m unittest discover tests
 To check that the trade-recording path still works without waiting for a market to open, replay real historical candles through the real engine:
 
 ```bash
-python3 -m trading_tool.replay
+python3 replay.py
 ```
 
 This places no orders and writes to a throwaway temp directory. It is not a backtest — its P&L means nothing; it exists to prove that fills, exit reasons, the round-trip ledger and the metrics all still line up. Worth running after any change to order execution or the exit rules.
@@ -44,7 +44,7 @@ Install the Longbridge SDK only when you are ready to test live connectivity:
 pip install longbridge
 ```
 
-Set credentials in your shell, a local secret manager, or a git-ignored `trading_tool/.env` file. Do not commit them.
+Set credentials in your shell, a local secret manager, or a git-ignored `.env` file. Do not commit them.
 
 ```bash
 export LONGBRIDGE_APP_KEY="your-app-key"
@@ -60,7 +60,7 @@ The AI brain is optional and reads its own key from the same place (`ANTHROPIC_A
 
 For a local paper run, use `Trading Mode = Paper`, keep `Allow live order submission` unchecked, set `Approval = Auto` if you want simulated orders to execute without manual clicks, enable `Strategy running`, and enable `Auto paper scan`. For roughly two months, set Duration to `86400` minutes.
 
-Paper state is persisted to `trading_tool/state/paper_state.json`. Simulated order fills are appended to `trading_tool/state/trade_log.jsonl`, and each completed round trip — a position opened and then fully closed — is appended to `trading_tool/state/trades_closed.jsonl`. Keep the server running for continuous scans.
+Paper state is persisted to `state/paper_state.json`. Simulated order fills are appended to `state/trade_log.jsonl`, and each completed round trip — a position opened and then fully closed — is appended to `state/trades_closed.jsonl`. Keep the server running for continuous scans.
 
 ## Measuring Whether It Works
 
@@ -73,7 +73,15 @@ Session P&L cannot tell you whether a strategy is any good; one lucky trade hide
 
 Under 20 closed trades the card says so in a warning banner rather than presenting noise as a result. The same data is available at `GET /api/metrics?window=session|day|week|all`, which also breaks the metrics down by exit reason (`stop_loss`, `profit_lock`, `trailing_stop`, `ai_sell`, …) and by AI strategy style.
 
-Two caveats. Only *closed* round trips count, so a window where you bought and held shows nothing. And in live mode the broker's real commissions are not returned by the order API, so live records model zero fees (`fees_modelled: false` in the ledger) — live net P&L reads optimistically. Paper mode models the $1 + 0.05% friction in full.
+Only *closed* round trips count, so a window where you bought and held shows nothing.
+
+Paper fills are charged **real per-market brokerage fees**, not a token amount. On a real SGX order of ~SGD 500 the charges come to about 0.26%, so a round trip costs ~0.5% — enough to swallow most of a 0.8% profit target. The SG schedule was derived from actual contract notes on this account; US and HK are deliberately conservative estimates, and the startup banner flags them as unverified on every boot. To replace a guess with measured truth:
+
+```bash
+python3 calibrate_fees.py
+```
+
+That compares the model against the real charges Longbridge billed on your own filled orders. It is read-only. In live mode nothing is modelled — the actual charge is read back off each filled order.
 
 ## Safety Model
 
@@ -85,9 +93,12 @@ Two caveats. Only *closed* round trips count, so a window where you bought and h
 - Mechanical exits (stop loss, profit lock, trailing stop) run *before* the AI on every tick. The AI can exit earlier, but it can never hold a position past these thresholds.
 - With Longbridge connected, only markets currently in session are scanned and traded; when everything is closed the engine idles rather than trading frozen prices.
 - No options, no margin, no short selling — hard-coded, not a setting.
+- In live mode the tool can never deploy more than the Budget you set, measured as the cost of what it holds plus anything in flight. Your account balance is not the limit; the Budget is.
+- In live mode it only sells positions it opened itself. Shares you bought yourself are invisible to it — and correspondingly not protected by its stop loss.
+- Live orders are restricted to US and SG symbols, the currencies whose balance the app can verify, and each order is checked against real cash in its own currency.
 - Live orders are submitted as day limit orders.
 - The app suppresses duplicate pending proposals for the same symbol and side.
-- Paper trades and state are persisted under `trading_tool/state/`.
+- Paper trades and state are persisted under `state/`.
 - `Allow live order submission` only gates real order placement. Live market data can be used without enabling that final order switch.
 
 ## Market Notes
@@ -104,9 +115,10 @@ Shipped since the first version:
 - Audit log of every tick, signal, proposal, approval, rejection, and order result.
 - Round-trip trade ledger with per-trade exit reasons, plus the Performance card and `/api/metrics` described above.
 
-Next, in order (see [`NEXT_SPEC.md`](NEXT_SPEC.md)):
+Next, in order (see [`NEXT_SPEC.md`](NEXT_SPEC.md) for the reasoning):
 
-- **Risk-based position sizing** — size each trade off ATR so one loss costs a fixed % of equity, replacing the flat dollar cap that currently ignores how volatile a symbol is. Per-position stops from the same ATR.
-- **Portfolio protections** — max concurrent positions, per-sector caps, a daily loss limit that survives restarts, and a cooldown after consecutive losses. Every block writes an audit entry; a silent block is worse than no block.
+- **Make the arithmetic work.** Measuring real fees showed the strategy is structurally unprofitable at small position sizes: round-trip friction is 1.60% (US) / 0.95% (SG) on a $250 position against a 0.8% profit target, so a *winning* trade loses money. First a guard that refuses trades which cannot clear their own costs, then a convergence gate to cut trade frequency (fee drag is cost × frequency), then swing mode for multi-day holds where the numbers work.
+- **Risk-based position sizing** — size each trade off ATR so one loss costs a fixed % of equity, replacing the flat dollar cap that ignores how volatile a symbol is. Per-position stops from the same ATR.
+- **Portfolio protections** — max concurrent positions, per-sector caps, a daily budget and loss limit that survive restarts, and a cooldown after consecutive losses. Every block writes an audit entry; a silent block is worse than no block.
 
-Still missing, and worth knowing about: no news or fundamentals (the news gate is a stub), no exchange-holiday calendar, and no train/test split on the backtest.
+Still missing, and worth knowing about: no news or fundamentals (the news gate is a stub), no exchange-holiday calendar, and no train/test split on the backtest. `NEXT_SPEC.md` also records what was tried and rejected, and why — including why removing the AI from the live loop does *not* fix the losses.

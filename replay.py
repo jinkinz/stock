@@ -29,9 +29,9 @@ survives a loop over hundreds of bars. The AI's own sell path is one tagged
 
 Usage
 ─────
-    python3 -m trading_tool.replay
-    python3 -m trading_tool.replay --symbols AAPL.US,NVDA.US --bars 400
-    python3 -m trading_tool.replay --period Min_15 --lock-profit 1.0 -v
+    python3 replay.py
+    python3 replay.py --symbols AAPL.US,NVDA.US --bars 400
+    python3 replay.py --period Min_15 --lock-profit 1.0 -v
 
 Requires a working Longbridge connection to fetch the history. All state is
 written to a throwaway temp directory — your real state/ files are never
@@ -46,9 +46,9 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .broker import PaperBroker
-from .models import ApprovalMode, Quote, Settings, TradingMode
-from .strategy import MomentumStrategy
+from broker import PaperBroker
+from models import ApprovalMode, Quote, Settings, TradingMode
+from strategy import MomentumStrategy
 
 # Exit reasons a closed trade is allowed to carry. A record outside this set
 # means a sell site was added without tagging it.
@@ -192,13 +192,13 @@ class ReplayBroker(PaperBroker):
 
 def fetch_history(symbols: list[str], period: str, count: int) -> dict[str, list[dict]]:
     """Real candles per symbol, keyed by symbol. Needs Longbridge connected."""
-    from .broker import LB_STATUS
+    from broker import LB_STATUS
 
     source = PaperBroker(starting_cash=0.0)
     if not LB_STATUS["connected"]:
         raise SystemExit(
             f"Longbridge is not connected ({LB_STATUS['error']}).\n"
-            "The replay harness needs real history — check trading_tool/.env "
+            "The replay harness needs real history — check .env "
             "and whether the access token has expired."
         )
     history: dict[str, list[dict]] = {}
@@ -219,12 +219,65 @@ def fetch_history(symbols: list[str], period: str, count: int) -> dict[str, list
     return history
 
 
+def _split_report(app, trades: list[dict], split_at: str, fraction: float) -> None:
+    """Metrics for the first `fraction` of the window vs the rest.
+
+    Every measurement in this project so far has been in-sample: settings were
+    chosen by looking at the same bars they were then scored on, which is how a
+    backtest produces a beautiful number that evaporates live. Splitting the
+    window is the cheapest available check on whether a result generalises.
+    A large train/test gap means the settings are fitted to noise.
+    """
+    from metrics import compute_metrics
+    train = [t for t in trades if t.get("closed_at", "") < split_at]
+    test = [t for t in trades if t.get("closed_at", "") >= split_at]
+    print(f"\n{'─' * 64}\nTrain / test split at {fraction:.0%} of the window\n{'─' * 64}")
+    print(f"  boundary: {split_at}")
+    rows = [("TRAIN (in-sample)", compute_metrics(train)),
+            ("TEST (out-of-sample)", compute_metrics(test))]
+    print(f"\n  {'segment':<22} {'trades':>7} {'expectancy':>12} {'net P&L':>11} {'win rate':>9}")
+    for label, m in rows:
+        print(f"  {label:<22} {m['total_trades']:>7} {m['expectancy_per_trade']:>12.2f} "
+              f"{m['net_pnl']:>11.2f} {m['win_rate'] * 100:>8.1f}%")
+
+    train_exp = rows[0][1]["expectancy_per_trade"]
+    test_exp = rows[1][1]["expectancy_per_trade"]
+    if not train or not test:
+        print("\n  One segment is empty — nothing to compare. Try a different --split.")
+        return
+
+    if test_exp <= 0 < train_exp:
+        print("\n  ⚠ OVERFIT: profitable in-sample, unprofitable out-of-sample. That is")
+        print("    the signature of settings fitted to this particular window. Do not")
+        print("    trust the in-sample number.")
+    elif train_exp <= 0 < test_exp:
+        # Not overfitting, but not reassuring either: the whole result rests on
+        # the later, smaller segment.
+        print("\n  Flat or negative in-sample, profitable out-of-sample — the opposite")
+        print("    of overfitting, but it means the entire result rests on the test")
+        print("    segment rather than on a consistent edge across the window.")
+    elif train_exp > 0 and test_exp > 0:
+        ratio = test_exp / train_exp
+        verdict = ("consistent" if 0.5 <= ratio <= 2.0
+                   else "very uneven between halves")
+        print(f"\n  Profitable in both segments, {verdict} "
+              f"(test is {ratio:.1f}× the in-sample expectancy).")
+    else:
+        print("\n  Unprofitable in both segments; the split adds nothing.")
+
+    thin = [label for label, m in rows if m["total_trades"] < 20]
+    if thin:
+        print(f"    Sample warning: {', '.join(thin)} has under 20 trades. At that size")
+        print("    a handful of outliers sets the result — this is a sanity check, not proof.")
+
+
 def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
                cash: float = 10_000.0, warmup: int = 30, lock_profit: float = 0.8,
                stop_loss: float = 1.0, trailing: float = 0.0,
-               verbose: bool = False) -> int:
+               min_confirmations: int = -1, use_atr_sizing: bool = True,
+               split: float = 0.0, verbose: bool = False) -> int:
     """Replay the engine over history. Returns a process exit code."""
-    from . import app
+    import app
 
     print(f"Fetching {period} history for {len(symbols)} symbols…")
     timeline = fetch_history(symbols, period, min(1000, bars + warmup))
@@ -248,6 +301,8 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
     app.BACKTEST_LOG = tmp / "backtest_log.jsonl"
 
     state = app.STATE
+    if min_confirmations < 0:                 # -1 = "use the app default"
+        min_confirmations = Settings().normalized().min_confirmations
     replay_symbols = list(timeline.keys())
     broker = ReplayBroker(timeline, starting_cash=cash)
 
@@ -257,7 +312,7 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
     # closed" branch and return before scanning anything at all. Replayed bars
     # are historical, so the gate must be off exactly as it is in sim mode.
     # This must happen AFTER the broker is built: its constructor reconnects.
-    from .broker import LB_STATUS
+    from broker import LB_STATUS
     LB_STATUS["connected"] = False
     LB_STATUS["error"] = "replay mode — market-hours gate disabled"
 
@@ -270,6 +325,9 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
         max_loss=cash * 0.10, duration_minutes=100_000,
         lock_profit_pct=lock_profit, stop_loss_pct=stop_loss,
         trailing_stop_pct=trailing, ai_strategy_name="replay",
+        min_confirmations=min_confirmations, use_atr_sizing=use_atr_sizing,
+        # Daily bars mean a multi-day horizon; match the engine's semantics.
+        trading_horizon=("swing" if period.lower().startswith("day") else "intraday"),
     ).normalized()
     state.proposals = []
     state.signals = []
@@ -287,6 +345,18 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
           f"(warmup {warmup})…")
     for index in range(warmup, length):
         broker.set_index(index)
+        # Advance the engine's clock to this bar, so daily budgets roll over
+        # and loss cooldowns expire on simulated time rather than the few
+        # seconds of wall clock this loop actually takes.
+        stamp = next((b[index].get("timestamp") for b in timeline.values()
+                      if index < len(b) and b[index].get("timestamp")), "")
+        if stamp:
+            try:
+                moment = datetime.fromisoformat(stamp)
+                app.TradingEngine.simulated_now = (
+                    moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc))
+            except ValueError:
+                pass
         engine.tick()
         if verbose:
             closed = _read_ledger(app.TRADES_CLOSED_LOG)
@@ -297,13 +367,22 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
 
     # Flatten anything still open so every round trip completes and the
     # session_end path gets exercised too.
+    app.TradingEngine.simulated_now = None
+    split_at = ""
+    if 0 < split < 1:
+        boundary = warmup + int((length - warmup) * split)
+        split_at = next((b[boundary].get("timestamp") for b in timeline.values()
+                         if boundary < len(b) and b[boundary].get("timestamp")), "")
     broker.set_index(length - 1)
     open_before = sum(1 for p in broker.portfolio().positions.values() if p.quantity > 0)
     if open_before:
         print(f"\nFlattening {open_before} open position(s) via stop-at-end…")
         engine._close_positions_at_end(broker.quotes(replay_symbols))
 
-    return _report(app, tmp, broker, engine)
+    code = _report(app, tmp, broker, engine)
+    if split_at:
+        _split_report(app, _read_ledger(app.TRADES_CLOSED_LOG), split_at, split)
+    return code
 
 
 def _read_ledger(path: Path) -> list[dict]:
@@ -335,9 +414,25 @@ def _report(app, tmp: Path, broker, engine) -> int:
 
     if not buys:
         print("\n  No entry ever filled, so the ledger path was never reached.")
-        print("  This is a replay-setup result, not necessarily a bug: the signal")
-        print("  engine needs score ≥0.55, a positive day change, RSI <75 and")
-        print("  turnover ≥$500k. Try more bars, more symbols, or a wider period.")
+        summary = engine.viability_summary()
+        blocked = [m for m, v in summary["per_market"].items()
+                   if v["assessable"] and not v["viable"]]
+        if summary["enforced"] and blocked:
+            # Not a signal problem — the trades were refused as unprofitable.
+            print(f"  CAUSE: the viability guard blocked every buy. At "
+                  f"${summary['trade_value']:,.0f}/trade with a "
+                  f"{summary['target_pct']:.2f}% target:")
+            for market in blocked:
+                v = summary["per_market"][market]
+                floor = v["min_viable_notional"]
+                print(f"    {market}: costs {v['breakeven_pct']:.2f}% — a win nets "
+                      f"{v['net_edge_pct']:+.2f}%"
+                      + (f" (needs ~${floor:,.0f}/trade)" if floor > 0 else ""))
+            print("  Re-run with a larger --cash, or a --lock-profit above those costs.")
+        else:
+            print("  This is a replay-setup result, not necessarily a bug: the signal")
+            print("  engine needs score ≥0.55, a positive day change, RSI <75 and")
+            print("  turnover ≥$500k. Try more bars, more symbols, or a wider period.")
 
     print("\n" + "─" * 64)
     print("Ledger integrity")
@@ -426,6 +521,17 @@ def main() -> int:
     parser.add_argument("--stop-loss", type=float, default=1.0, help="stop-loss %% (0 = off)")
     parser.add_argument("--trailing", type=float, default=0.0,
                         help="trailing-stop %% (0 = off)")
+    # Defaults to whatever the app ships, so a bare run reflects real
+    # behaviour rather than a harness-only configuration.
+    parser.add_argument("--min-confirmations", type=int,
+                        default=Settings().normalized().min_confirmations,
+                        help="convergence gate: independent factors that must agree "
+                             "before a buy (0-5, 0 = off). Defaults to the app default")
+    parser.add_argument("--split", type=float, default=0.0,
+                        help="train/test split fraction, e.g. 0.6 — reports the first "
+                             "60%% of the window separately from the rest")
+    parser.add_argument("--flat-sizing", action="store_true",
+                        help="disable ATR position sizing (A/B against the default)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print each round trip as it closes")
     args = parser.parse_args()
@@ -434,7 +540,10 @@ def main() -> int:
     return run_replay(symbols=symbols, period=args.period, bars=args.bars,
                       cash=args.cash, warmup=args.warmup,
                       lock_profit=args.lock_profit, stop_loss=args.stop_loss,
-                      trailing=args.trailing, verbose=args.verbose)
+                      trailing=args.trailing,
+                      min_confirmations=args.min_confirmations,
+                      use_atr_sizing=not args.flat_sizing, split=args.split,
+                      verbose=args.verbose)
 
 
 if __name__ == "__main__":

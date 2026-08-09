@@ -42,8 +42,8 @@ import statistics
 from collections import deque
 from datetime import datetime, timezone
 
-from .broker import affordable_quantity
-from .models import Diagnostics, OrderProposal, Portfolio, Quote, Settings, Side, Signal
+from models import Diagnostics, OrderProposal, Portfolio, Quote, Settings, Side, Signal
+from sizing import size_position
 
 # How many ticks a proposal stays valid in manual-approval mode before
 # it is considered stale and should be ignored by the UI / auto-expiry.
@@ -52,6 +52,46 @@ PROPOSAL_TTL_SECONDS = 300   # 5 minutes
 # Liquidity gate: never buy a symbol whose traded value today is below this.
 # Illiquid names have wide spreads and unreliable fills.
 MIN_TURNOVER = 500_000.0
+
+# Bars used for the horizon-scale range and momentum measures. On daily candles
+# this is roughly a trading month — the swing equivalent of "today's range".
+RANGE_LOOKBACK_BARS = 20
+
+# Typical move size per horizon, used to normalise the momentum score component.
+# A +2% day is strong intraday; over 20 days it is ordinary.
+TREND_SCALE_PCT = {"intraday": 5.0, "swing": 15.0}
+
+
+def atr(candles: list[dict], period: int = 14) -> float:
+    """Average True Range — how far this symbol typically moves per bar.
+
+    True range is max(high−low, |high−prev_close|, |low−prev_close|), which
+    counts overnight gaps that a plain high−low misses. Smoothed the Wilder
+    way, consistent with the RSI implementation below.
+
+    A flat percentage stop treats a sleepy utility and a biotech the same; ATR
+    is what lets the stop and the position size adapt to the symbol. Returns
+    0.0 when there aren't enough bars — callers must treat 0.0 as "unknown"
+    and fall back, never as "no volatility".
+    """
+    if period < 1 or len(candles) < period + 1:
+        return 0.0
+    true_ranges: list[float] = []
+    for i in range(1, len(candles)):
+        current, previous = candles[i], candles[i - 1]
+        close = current.get("close", 0.0) or 0.0
+        high = current.get("high") or close
+        low = current.get("low") or close
+        prev_close = previous.get("close", 0.0) or 0.0
+        if close <= 0 or prev_close <= 0:
+            continue
+        true_ranges.append(max(high - low, abs(high - prev_close), abs(low - prev_close)))
+    if len(true_ranges) < period:
+        return 0.0
+    smoothed = sum(true_ranges[:period]) / period
+    for tr in true_ranges[period:]:
+        smoothed = (smoothed * (period - 1) + tr) / period
+    return round(smoothed, 6)
 
 
 def compute_indicators(candles: list[dict]) -> dict:
@@ -101,12 +141,44 @@ def compute_indicators(candles: list[dict]) -> dict:
             recent = sum(vols[-3:]) / 3
             vol_surge = round(recent / base, 2)
 
+    # Horizon-scale structure and momentum, measured in BARS rather than in
+    # today's session or in the last half-hour of ticks. On daily candles these
+    # are the multi-day equivalents of "near the day high" and "pushing up";
+    # a multi-day position confirmed by a 30-minute tick push is a horizon
+    # mismatch, not a confirmation.
+    lookback = closes[-RANGE_LOOKBACK_BARS:]
+    highs = [c.get("high") or c["close"] for c in candles[-RANGE_LOOKBACK_BARS:]
+             if c.get("close", 0) > 0]
+    lows = [c.get("low") or c["close"] for c in candles[-RANGE_LOOKBACK_BARS:]
+            if c.get("close", 0) > 0]
+    range_high = max(highs) if highs else 0.0
+    range_low = min(lows) if lows else 0.0
+
+    bar_momentum = 0.0
+    if len(lookback) >= 5:
+        recent = sum(lookback[-3:]) / 3
+        baseline = sum(lookback) / len(lookback)
+        if baseline > 0:
+            bar_momentum = recent / baseline - 1.0
+    change_lookback_pct = 0.0
+    if len(lookback) >= 2 and lookback[0] > 0:
+        change_lookback_pct = (lookback[-1] / lookback[0] - 1.0) * 100
+
     return {
         "ema9": ema(closes, 9),
         "ema21": ema(closes, 21),
         "rsi": round(rsi, 1),
+        # NOTE: volume-weighted average over WHATEVER candles were supplied.
+        # On 1-min bars that approximates session VWAP; on daily bars it is a
+        # long-run fair-value anchor, NOT session VWAP. Same maths, different
+        # meaning — do not describe it as session VWAP in swing mode.
         "vwap": vwap,
         "vol_surge": vol_surge,
+        "atr": atr(candles),
+        "range_high": range_high,
+        "range_low": range_low,
+        "bar_momentum": bar_momentum,
+        "change_lookback_pct": round(change_lookback_pct, 3),
     }
 
 
@@ -204,6 +276,8 @@ class MomentumStrategy:
         if ind.get("ema9") and ind.get("ema21"):
             ema_trend = "bull" if ind["ema9"] > ind["ema21"] else "bear"
         vol_surge = ind.get("vol_surge", 0.0)
+        atr_value = ind.get("atr", 0.0)
+        atr_pct = round(atr_value / quote.price * 100, 3) if quote.price > 0 and atr_value > 0 else 0.0
 
         return Diagnostics(
             symbol=quote.symbol,
@@ -212,7 +286,10 @@ class MomentumStrategy:
             spread_pct=spread_pct,
             volume_spike=volume_spike,
             trend_strength=trend_strength,
-            news_gate=True,   # stub — wire up a real news feed here
+            news_gate=True,   # stub — no news API available from Longbridge
+            # Real, data-backed veto (unlike news_gate): the exchange itself
+            # says whether this symbol is trading normally.
+            tradable=(quote.trade_status or "normal") == "normal",
             day_change_pct=day_change_pct,
             from_high_pct=from_high_pct,
             turnover=quote.turnover,
@@ -220,6 +297,8 @@ class MomentumStrategy:
             vwap_dist_pct=vwap_dist_pct,
             ema_trend=ema_trend,
             vol_surge=vol_surge,
+            atr=atr_value,
+            atr_pct=atr_pct,
         )
 
     # ------------------------------------------------------------------
@@ -236,7 +315,9 @@ class MomentumStrategy:
             self.observe(quote)
         self.flush_tick_counts()
 
-        signals = [s for quote in quotes if (s := self._signal(quote, portfolio)) is not None]
+        signals = [s for quote in quotes
+                   if (s := self._signal(quote, portfolio, settings.min_confirmations,
+                                         settings.trading_horizon)) is not None]
         signals.sort(key=lambda s: s.score, reverse=True)
 
         # Circuit-breaker: no new buys if we've lost too much
@@ -278,18 +359,29 @@ class MomentumStrategy:
             if spendable <= 0:
                 break   # no cash left this cycle
 
-            quantity = affordable_quantity(signal.price, settings.max_trade_value, spendable)
-            if quantity <= 0:
+            # Risk-based sizing: the symbol's own volatility decides the
+            # quantity, so every position risks the same slice of equity.
+            sized = size_position(
+                price=signal.price,
+                atr=signal.diagnostics.atr if signal.diagnostics else 0.0,
+                equity=portfolio.equity(),
+                spendable=spendable,
+                max_trade_value=settings.max_trade_value,
+                risk_per_trade_pct=settings.risk_per_trade_pct,
+                atr_stop_multiple=settings.atr_stop_multiple,
+                use_atr_sizing=settings.use_atr_sizing,
+            )
+            if not sized.ok:
                 continue
 
-            reserved_cash += quantity * signal.price
+            reserved_cash += sized.notional
             proposals.append(OrderProposal(
                 symbol=signal.symbol,
                 side=Side.BUY,
-                quantity=quantity,
+                quantity=sized.quantity,
                 price=signal.price,
                 confidence=signal.score,
-                reason=signal.reason,
+                reason=f"{signal.reason} Size: {sized.reason}.",
             ))
 
         return signals[:12], proposals[:5]
@@ -298,7 +390,42 @@ class MomentumStrategy:
     # Per-symbol signal scoring
     # ------------------------------------------------------------------
 
-    def _signal(self, quote: Quote, portfolio: Portfolio) -> Signal | None:
+    # ── Convergence gate ─────────────────────────────────────────────────
+    # The composite score is a weighted blend, which means one strong factor
+    # can carry an entry over the line while every other factor disagrees — a
+    # big day move with no trend, no VWAP support and drying volume still
+    # scores well. Those are the trades that lose.
+    #
+    # This counts INDEPENDENT confirmations instead. Each looks at a different
+    # thing: direction, institutional value, participation, structure, and
+    # short-term push. Requiring several to agree cuts trade count sharply,
+    # which matters because fee drag is cost × frequency.
+    #
+    # A factor with no data (no candles fetched yet) counts as NOT confirmed —
+    # never as confirmed. Absence of evidence is not confirmation.
+    CONFIRMATION_NAMES = ("trend", "vwap", "volume", "structure", "momentum")
+
+    @staticmethod
+    def _confirmations(diag, range_pos: float, momentum: float) -> tuple[list[str], list[str]]:
+        """(met, missing) independent confirmations for a long entry."""
+        checks = {
+            # EMA9 above EMA21 — short-term direction
+            "trend": diag.ema_trend == "bull",
+            # Above session VWAP — institutions defend it
+            "vwap": diag.vwap_dist_pct > 0,
+            # Heavier tape than the session average confirms a real move
+            "volume": diag.vol_surge >= 1.0,
+            # Sitting in the top third of the day's range — breakout structure
+            "structure": range_pos >= 0.66,
+            # Short-term tick push still positive
+            "momentum": momentum > 0,
+        }
+        met = [name for name in MomentumStrategy.CONFIRMATION_NAMES if checks[name]]
+        missing = [name for name in MomentumStrategy.CONFIRMATION_NAMES if not checks[name]]
+        return met, missing
+
+    def _signal(self, quote: Quote, portfolio: Portfolio,
+                min_confirmations: int = 0, horizon: str = "intraday") -> Signal | None:
         prices = self.history.setdefault(quote.symbol, deque(maxlen=30))
         diag = self._diagnostics(quote)
         position = portfolio.positions.get(quote.symbol)
@@ -323,35 +450,62 @@ class MomentumStrategy:
         # ── Real-data scoring ────────────────────────────────────────────
         clamp = lambda v, lo, hi: max(lo, min(hi, v))
         day_chg = diag.day_change_pct
-        range_pos = 0.5
-        if quote.high > quote.low:
-            range_pos = (quote.price - quote.low) / (quote.high - quote.low)
+
+        # ── Horizon-appropriate structure, momentum and trend ────────────
+        # Intraday: today's session range and the rolling tick window are the
+        # right measures. Swing: they are not — "top third of TODAY's range"
+        # and "pushed up over the last 30 minutes" say nothing about a
+        # multi-day position, so the same concepts are measured in bars.
+        indicators = self._fresh_indicators(quote.symbol)
+        swing = horizon == "swing"
+        range_high = indicators.get("range_high", 0.0)
+        range_low = indicators.get("range_low", 0.0)
+
+        if swing and range_high > range_low > 0:
+            range_pos = clamp((quote.price - range_low) / (range_high - range_low), 0.0, 1.0)
+            structure_label = f"{RANGE_LOOKBACK_BARS}-bar range"
+        else:
+            range_pos = 0.5
+            if quote.high > quote.low:
+                range_pos = (quote.price - quote.low) / (quote.high - quote.low)
+            structure_label = "day range"
+
+        if swing and indicators:
+            momentum = indicators.get("bar_momentum", 0.0)
+            # Multi-bar change, not a single session's move.
+            trend_pct = indicators.get("change_lookback_pct", day_chg)
+            trend_label = f"{RANGE_LOOKBACK_BARS}-bar"
+        else:
+            trend_pct = day_chg
+            trend_label = "day"
 
         reasons: list[str] = []
         score = 0.0
 
-        # Day momentum: reward gains up to +5% (beyond that it's usually chased)
-        day_component = clamp(day_chg / 5.0, -0.5, 1.0) * 0.30
-        score += day_component
-        if day_chg != 0:
-            reasons.append(f"day {day_chg:+.2f}%")
+        # Trend momentum, normalised by what counts as a big move on this
+        # horizon: +5% is a strong day but an ordinary month.
+        scale = TREND_SCALE_PCT.get(horizon, TREND_SCALE_PCT["intraday"])
+        score += clamp(trend_pct / scale, -0.5, 1.0) * 0.30
+        if trend_pct != 0:
+            reasons.append(f"{trend_label} {trend_pct:+.2f}%")
 
         # Buying strength near the day high = breakout behaviour
         score += range_pos * 0.15
         if range_pos > 0.8:
-            reasons.append("near day high")
+            reasons.append(f"near {structure_label} high")
 
         # Tick momentum confirmation
         score += clamp(momentum * 400, -1.0, 1.0) * 0.10
 
         # VWAP: institutions defend it — above is long territory
         if diag.vwap_dist_pct != 0.0:
+            anchor = "long-run VWAP" if swing else "VWAP"
             if diag.vwap_dist_pct > 0:
                 score += 0.15
-                reasons.append("above VWAP")
+                reasons.append(f"above {anchor}")
             else:
                 score -= 0.15
-                reasons.append("below VWAP")
+                reasons.append(f"below {anchor}")
 
         # EMA9/21 trend
         if diag.ema_trend == "bull":
@@ -393,7 +547,7 @@ class MomentumStrategy:
                 exhausted
                 or (below_vwap and diag.ema_trend == "bear")
                 or (below_vwap and momentum < -0.003)
-                or day_chg < -1.0
+                or trend_pct < -1.0
             )
             if reversal:
                 return Signal(
@@ -410,10 +564,35 @@ class MomentumStrategy:
             )
 
         # ── BUY: strong composite, liquid, not overbought, above VWAP ────
-        if score >= 0.55 and day_chg > 0 and not overbought and not illiquid and not below_vwap:
+        if not diag.tradable:
+            # Halted or suspended. Buying into one is how you end up holding
+            # something you cannot exit.
             return Signal(
-                symbol=quote.symbol, price=quote.price, score=score, action="buy",
-                reason=f"Uptrend: {reason_txt}.",
+                symbol=quote.symbol, price=quote.price, score=0.0, action="watch",
+                reason=f"Not tradable — exchange status '{quote.trade_status}'.",
+                diagnostics=diag,
+            )
+
+        # `trend_pct > 0` is the horizon-appropriate form of "it is going up":
+        # today's change intraday, the multi-bar change for swing. Requiring
+        # TODAY to be green before opening a multi-day position is an intraday
+        # constraint that has no business gating a swing entry.
+        if score >= 0.55 and trend_pct > 0 and not overbought and not illiquid and not below_vwap:
+            met, missing = self._confirmations(diag, range_pos, momentum)
+            if len(met) >= min_confirmations:
+                confirm_txt = (f" [{len(met)}/{len(self.CONFIRMATION_NAMES)} confirm: "
+                               f"{', '.join(met)}]" if min_confirmations else "")
+                return Signal(
+                    symbol=quote.symbol, price=quote.price, score=score, action="buy",
+                    reason=f"Uptrend: {reason_txt}.{confirm_txt}",
+                    diagnostics=diag,
+                )
+            # Scored well but the factors disagree — the expensive kind of trade.
+            return Signal(
+                symbol=quote.symbol, price=quote.price,
+                score=clamp(score, 0.0, 0.54), action="watch",
+                reason=(f"Not converged — only {len(met)}/{min_confirmations} confirmations "
+                        f"({', '.join(met) or 'none'}); missing {', '.join(missing)}."),
                 diagnostics=diag,
             )
 

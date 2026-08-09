@@ -47,6 +47,9 @@ def compute_metrics(trades: list[dict], starting_equity: float = 0.0) -> dict:
     result = _core_metrics(trades, starting_equity)
     result["by_exit_reason"] = _grouped(trades, "exit_reason", "unknown", starting_equity)
     result["by_strategy"] = _grouped(trades, "strategy", "unknown", starting_equity)
+    # The comparison that answers "which setup actually works" — every trade
+    # carries the configuration it was opened under.
+    result["by_config"] = _grouped(trades, "config_key", "unknown", starting_equity)
     return result
 
 

@@ -49,7 +49,10 @@ function render(data) {
     lb_connected = false, lb_error = null,
     last_tick_at = null,
     ai_status = {},
+    viability = null,
   } = data;
+
+  renderViability(viability);
 
   // AI Brain status
   const aiEl = el("aiStatus");
@@ -106,6 +109,33 @@ function render(data) {
   const tsEl2 = el("trailingStopPct");
   if (tsEl2 && document.activeElement !== tsEl2)
     tsEl2.value = settings.trailing_stop_pct || 0;
+
+  const rpEl = el("riskPerTradePct");
+  if (rpEl && document.activeElement !== rpEl) rpEl.value = settings.risk_per_trade_pct ?? 0.5;
+  const amEl = el("atrStopMultiple");
+  if (amEl && document.activeElement !== amEl) amEl.value = settings.atr_stop_multiple ?? 2;
+  const asEl = el("useAtrSizing");
+  if (asEl) asEl.checked = settings.use_atr_sizing !== false;
+
+  for (const [id, key, dflt] of [["maxConcurrentPositions","max_concurrent_positions",5],
+                                 ["dailyBudget","daily_budget",0],
+                                 ["dailyLossLimit","daily_loss_limit",0],
+                                 ["cooldownAfterLosses","cooldown_after_losses",3]]) {
+    const node = el(id);
+    if (node && document.activeElement !== node) node.value = settings[key] ?? dflt;
+  }
+
+  const thEl = el("tradingHorizon");
+  if (thEl && document.activeElement !== thEl) thEl.value = settings.trading_horizon || "intraday";
+  // Duration and stop-at-end do nothing in swing mode — a session that never
+  // expires can never reach them. Showing them implies control that isn't there.
+  const swing = (settings.trading_horizon || "intraday") === "swing";
+  const durField = el("durationField");
+  if (durField) durField.style.display = swing ? "none" : "";
+
+  const mcEl = el("minConfirmations");
+  if (mcEl && document.activeElement !== mcEl)
+    mcEl.value = String(settings.min_confirmations ?? 5);
 
   _updateStrategyDesc();
 
@@ -422,6 +452,56 @@ function renderAuditLog() {
 }
 
 // ─────────────────────────────────────────────
+// Viability — can these settings make money at all?
+// ─────────────────────────────────────────────
+function renderViability(v) {
+  const box = el("viabilityBanner");
+  if (!box || !v) return;
+  const markets = Object.entries(v.per_market || {});
+  if (!markets.length) { box.style.display = "none"; return; }
+  box.style.display = "";
+
+  const money = n => `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  const assessable = markets.filter(([, m]) => m.assessable);
+
+  // No profit target — we can't judge, but we can still say what must be beaten.
+  if (!assessable.length) {
+    const costs = markets.map(([name, m]) => `${name} ${m.breakeven_pct.toFixed(2)}%`).join(" · ");
+    box.className = "viability-banner info";
+    box.innerHTML = `<div class="viability-title">No profit target set</div>
+      <div class="viability-detail">Viability can't be judged without a Profit Lock %.
+      At ${money(v.trade_value)}/trade, a round trip must clear: ${costs}.</div>`;
+    return;
+  }
+
+  const broken = assessable.filter(([, m]) => !m.viable);
+  if (!broken.length) {
+    const edges = assessable.map(([n, m]) => `${n} ${m.net_edge_pct >= 0 ? "+" : ""}${m.net_edge_pct.toFixed(2)}%`).join(" · ");
+    box.className = "viability-banner ok";
+    box.innerHTML = `<div class="viability-title">✓ Costs covered</div>
+      <div class="viability-detail">At ${money(v.trade_value)}/trade with a
+      ${v.target_pct.toFixed(2)}% target, a winning trade nets ${edges} after fees and slippage.</div>`;
+    return;
+  }
+
+  const rows = broken.map(([name, m]) => {
+    const fix = m.min_viable_notional > 0
+      ? `raise trade size to ~${money(m.min_viable_notional)}, or the target above ${m.breakeven_pct.toFixed(2)}%`
+      : `no trade size works — the target must exceed ${m.breakeven_pct.toFixed(2)}%`;
+    return `<div><strong>${name}</strong>: costs ${m.breakeven_pct.toFixed(2)}% vs
+      ${v.target_pct.toFixed(2)}% target → a <em>winning</em> trade nets
+      ${m.net_edge_pct.toFixed(2)}%. <span class="viability-fix">Fix: ${fix}.</span></div>`;
+  }).join("");
+
+  box.className = "viability-banner warn";
+  box.innerHTML = `<div class="viability-title">⚠ Unprofitable by construction</div>
+    <div class="viability-detail">${rows}</div>
+    <div class="viability-fix">${v.enforced
+      ? "New buys are being blocked while this holds."
+      : "Enforcement is OFF — these trades are being placed anyway."}</div>`;
+}
+
+// ─────────────────────────────────────────────
 // Performance
 // ─────────────────────────────────────────────
 // Fetched on its own schedule rather than off the SSE state frame: metrics
@@ -477,11 +557,139 @@ function renderMetrics(report) {
              cls(vsBench))}
     </div>
     ${warning}
+    ${renderExitBreakdown(m.by_exit_reason)}
     <div class="perf-foot">
       Net P&L ${money(m.net_pnl)} · avg hold ${formatHold(m.avg_hold_seconds)} ·
       benchmark: ${bench.source || "—"}${bench.symbols?.length ? ` (${bench.symbols.length} symbol${bench.symbols.length === 1 ? "" : "s"})` : ""} ·
       return basis: ${report.return_basis || "—"}
     </div>`;
+}
+
+// Exit reason is the highest-value field in the ledger: it is what tells you
+// whether the stop loss is protecting you or bleeding you. Rendered as its own
+// breakdown rather than buried in a tooltip.
+const EXIT_LABELS = {
+  profit_lock: "Profit lock", stop_loss: "Stop loss", trailing_stop: "Trailing stop",
+  ai_sell: "AI decision", strategy_sell: "Signal reversal", session_end: "Session end",
+  manual: "Manual", unknown: "Unknown",
+};
+
+function renderExitBreakdown(byReason) {
+  const rows = Object.entries(byReason || {});
+  if (!rows.length) return "";
+  rows.sort((a, b) => b[1].total_trades - a[1].total_trades);
+  const body = rows.map(([reason, m]) => {
+    const net = Number(m.net_pnl || 0);
+    return `<tr>
+      <td>${EXIT_LABELS[reason] || reason}</td>
+      <td>${m.total_trades}</td>
+      <td>${(Number(m.win_rate) * 100).toFixed(0)}%</td>
+      <td class="${net > 0 ? "gain" : net < 0 ? "loss" : ""}">${net >= 0 ? "+" : ""}${money(net)}</td>
+      <td>${money(m.expectancy_per_trade)}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="perf-breakdown">
+    <div class="perf-breakdown-title">How trades ended</div>
+    <table class="data-table">
+      <thead><tr><th>Exit reason</th><th>Trades</th><th>Win rate</th><th>Net P&L</th><th>Per trade</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// What works — results grouped by configuration
+// ─────────────────────────────────────────────
+async function loadPerformance() {
+  try {
+    const win = el("metricsWindow")?.value || "all";
+    renderPerformance(await api(`/api/performance?window=${win}`));
+  } catch {}
+}
+
+function renderPerformance(report) {
+  const tbody = el("configBody"); if (!tbody) return;
+  const rows = report?.configs || [];
+  const badge = el("configCount");
+  if (badge) badge.textContent = report?.distinct_configs ?? 0;
+  const foot = el("configFoot");
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-cell">No closed trades yet —
+      each completed round trip records the settings it ran under, and they are compared here.</td></tr>`;
+    if (foot) foot.textContent = "";
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const exp = Number(r.expectancy || 0);
+    const net = Number(r.net_pnl || 0);
+    const cls = exp > 0 ? "gain" : exp < 0 ? "loss" : "";
+    const active = r.config_key === report.current_config_key;
+    const days = (r.first_trade && r.last_trade)
+      ? `${new Date(r.first_trade).toLocaleDateString()} → ${new Date(r.last_trade).toLocaleDateString()}`
+      : "—";
+    // A config with a handful of trades is noise; say so on the row itself
+    // rather than letting it top the table unchallenged.
+    const warn = r.sample_warning ? ` <span class="hint-inline">(thin)</span>` : "";
+    return `<tr${active ? ' style="outline:1px solid var(--blue)"' : ""}>
+      <td><strong>${r.config_key}</strong>${active ? ' <span class="tag">active</span>' : ""}</td>
+      <td>${r.trades}${warn}</td>
+      <td class="${cls}">${exp >= 0 ? "+" : ""}${money(exp)}</td>
+      <td class="${net > 0 ? "gain" : net < 0 ? "loss" : ""}">${net >= 0 ? "+" : ""}${money(net)}</td>
+      <td>${(Number(r.win_rate) * 100).toFixed(0)}%</td>
+      <td>${Number(r.profit_factor).toFixed(2)}</td>
+      <td>${Number(r.fees_as_pct_of_gross).toFixed(1)}%</td>
+      <td>${days}</td>
+    </tr>`;
+  }).join("");
+
+  if (foot) {
+    const thin = rows.filter(r => r.sample_warning).length;
+    foot.innerHTML = `${report.total_trades} closed trades across ${rows.length} configuration(s), ranked by expectancy.`
+      + (thin ? ` ${thin} marked "thin" have under 20 trades — treat those rows as noise, not evidence.` : "");
+  }
+}
+
+// ─────────────────────────────────────────────
+// Closed trades
+// ─────────────────────────────────────────────
+async function loadTrades() {
+  try {
+    const win = el("metricsWindow")?.value || "all";
+    renderTrades(await api(`/api/trades?window=${win}&limit=100`));
+  } catch {}
+}
+
+function renderTrades(payload) {
+  const tbody = el("tradesBody"); if (!tbody) return;
+  const trades = payload?.trades || [];
+  const count = el("tradesCount");
+  if (count) count.textContent = payload?.total_in_window ?? trades.length;
+
+  if (!trades.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-cell">No closed trades in this window</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = trades.map(t => {
+    const net = Number(t.net_pnl || 0);
+    const ret = Number(t.return_pct || 0);
+    const cls = net > 0 ? "gain" : net < 0 ? "loss" : "";
+    const when = t.closed_at ? new Date(t.closed_at).toLocaleString() : "—";
+    const feeNote = t.fees_source === "actual" ? "" :
+      t.fees_source === "unknown" ? " title=\"Fees unknown — broker reported no charges\"" : "";
+    return `<tr${feeNote}>
+      <td>${when}</td>
+      <td><strong>${t.symbol}</strong></td>
+      <td>${formatQty(t.quantity)}</td>
+      <td>${money(t.entry_price)}</td>
+      <td>${money(t.exit_price)}</td>
+      <td>${formatHold(t.hold_seconds)}</td>
+      <td class="${cls}">${net >= 0 ? "+" : ""}${money(net)}</td>
+      <td class="${cls}">${ret >= 0 ? "+" : ""}${ret.toFixed(2)}%</td>
+      <td><span class="tag">${EXIT_LABELS[t.exit_reason] || t.exit_reason || "—"}</span></td>
+    </tr>`;
+  }).join("");
 }
 
 function formatHold(seconds) {
@@ -551,7 +759,7 @@ function renderBacktest(result) {
 // ─────────────────────────────────────────────
 // Collapsible panels — toggled by clicking header
 // ─────────────────────────────────────────────
-["diagToggle","sessionsToggle","auditToggle"].forEach(id => {
+["diagToggle","sessionsToggle","auditToggle","tradesToggle","perfToggle"].forEach(id => {
   const btn = el(id);
   if (!btn) return;
   btn.addEventListener("click", () => {
@@ -587,6 +795,7 @@ el("settingsForm").addEventListener("submit", async e => {
     strategy_enabled:     state.settings?.strategy_enabled || false,
     auto_tick_enabled:    true,   // always on — controlled by Start/End Session
     tick_interval_seconds:Number(form.get("tick_interval_seconds")),
+    trading_horizon:      String(form.get("trading_horizon") || "intraday"),
     allow_live_trading:   el("allow_live_trading").checked,
   })}));
 });
@@ -604,7 +813,7 @@ el("endSessionBtn").addEventListener("click", async () => {
   })}));
 });
 
-el("tickButton").addEventListener("click",   async () => { render(await api("/api/tick")); loadMetrics(); });
+el("tickButton").addEventListener("click",   async () => { render(await api("/api/tick")); refreshPerformance(); });
 el("pauseButton").addEventListener("click",  async () => {
   render(await api(state.tick_paused ? "/api/tick/resume" : "/api/tick/pause", { method: "POST" }));
 });
@@ -689,6 +898,14 @@ el("saveAiBtn").addEventListener("click", async () => {
   const lockPct  = parseFloat(el("lockProfitPct").value || "0");
   const stopPct  = parseFloat(el("stopLossPct").value || "0");
   const trailPct = parseFloat(el("trailingStopPct").value || "0");
+  const minConf  = parseInt(el("minConfirmations").value || "0", 10);
+  const riskPct  = parseFloat(el("riskPerTradePct").value || "0.5");
+  const atrMult  = parseFloat(el("atrStopMultiple").value || "2");
+  const atrSize  = el("useAtrSizing").checked;
+  const maxPos   = parseInt(el("maxConcurrentPositions").value || "0", 10);
+  const dailyBud = parseFloat(el("dailyBudget").value || "0");
+  const dailyLos = parseFloat(el("dailyLossLimit").value || "0");
+  const coolN    = parseInt(el("cooldownAfterLosses").value || "0", 10);
   const statusEl = el("aiConfigStatus");
   statusEl.style.color = "var(--muted)";
   statusEl.textContent = "Applying…";
@@ -701,6 +918,14 @@ el("saveAiBtn").addEventListener("click", async () => {
       lock_profit_pct: lockPct,
       stop_loss_pct: stopPct,
       trailing_stop_pct: trailPct,
+      min_confirmations: minConf,
+      risk_per_trade_pct: riskPct,
+      atr_stop_multiple: atrMult,
+      use_atr_sizing: atrSize,
+      max_concurrent_positions: maxPos,
+      daily_budget: dailyBud,
+      daily_loss_limit: dailyLos,
+      cooldown_after_losses: coolN,
       ai_strategy_name: strategy,
     })});
     // Then hot-swap the AI provider/model/strategy
@@ -741,6 +966,9 @@ connectStream();
 // Performance card: on load, on demand, and on a slow timer. Deliberately not
 // tied to the SSE state frame — closed-trade metrics only move when a round
 // trip completes, and the benchmark costs candle API calls.
-el("metricsWindow")?.addEventListener("change", loadMetrics);
-loadMetrics();
-setInterval(loadMetrics, 60000);
+// The window selector drives both the metrics and the trade list — they are
+// two views of the same ledger and must never disagree about the period.
+function refreshPerformance() { loadMetrics(); loadTrades(); loadPerformance(); }
+el("metricsWindow")?.addEventListener("change", refreshPerformance);
+refreshPerformance();
+setInterval(refreshPerformance, 60000);
