@@ -978,20 +978,32 @@ async function saveAllSettings() {
   btn.disabled = true;
   statusEl.style.color = "var(--muted)";
   statusEl.textContent = "Saving…";
+  // Read EVERY field before anything is posted. render() re-syncs the form
+  // from server state, so reading the provider after the settings POST returns
+  // whatever the server still had — silently discarding the user's choice.
+  const wanted = {
+    provider: el("aiProvider").value,
+    model: el("aiModel").value.trim(),
+    strategy: el("aiStrategy").value,
+  };
+  const payload = collectSettings();
   try {
-    render(await api("/api/settings", {
-      method: "POST", body: JSON.stringify(collectSettings()) }));
+    render(await api("/api/settings", { method: "POST", body: JSON.stringify(payload) }));
     // Provider/model hot-swap is a separate endpoint, but it is still part of
     // "save" from the user's point of view — so it happens on the same click.
-    const s = await api("/api/ai/config", { method: "POST", body: JSON.stringify({
-      provider: el("aiProvider").value,
-      model: el("aiModel").value.trim(),
-      strategy: el("aiStrategy").value,
-    })});
-    statusEl.style.color = "var(--green)";
+    const s = await api("/api/ai/config", {
+      method: "POST", body: JSON.stringify(wanted) });
+    // Reflect what the AI layer ACTUALLY ended up on, so the form never shows
+    // a provider that was not applied.
+    if (s.ai) {
+      state.ai_status = s.ai;
+      const sel = el("aiProvider");
+      if (sel && s.ai.provider) sel.value = s.ai.provider;
+    }
+    statusEl.style.color = s.ai?.error ? "var(--red)" : "var(--green)";
     statusEl.textContent = s.ai?.error
-      ? `Saved \u2014 but AI: ${s.ai.error}`
-      : `\u2713 Saved all settings \u00b7 ${new Date().toLocaleTimeString()}`;
+      ? `Settings saved \u2014 AI failed: ${s.ai.error}`
+      : `\u2713 Saved \u00b7 ${s.ai?.provider || "?"} / ${s.ai?.model || "default"} \u00b7 ${new Date().toLocaleTimeString()}`;
   } catch (err) {
     statusEl.style.color = "var(--red)";
     statusEl.textContent = "Save failed: " + err.message;
