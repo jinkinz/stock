@@ -14,7 +14,7 @@ make the simulator untestable at night.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 # market -> (timezone, [((open_h, open_m), (close_h, close_m)), ...])
@@ -72,6 +72,28 @@ def local_date(market: str, now: datetime | None = None) -> str:
     if info is None:
         return moment.astimezone(timezone.utc).strftime("%Y-%m-%d")
     return moment.astimezone(ZoneInfo(info[0])).strftime("%Y-%m-%d")
+
+
+def minutes_until_open(market: str, now: datetime | None = None) -> float:
+    """Minutes until this market's next regular session opens.
+
+    0.0 when it is already open; a large number when it is far off. Used to
+    decide when the pre-market window has started — a screen run at midnight is
+    reading stale prints, one run just before the bell is reading today's.
+    Unknown markets return 0.0 (treated as always open elsewhere).
+    """
+    info = MARKET_SESSIONS.get((market or "").upper())
+    if info is None or is_market_open(market, now):
+        return 0.0
+    tz_name, sessions = info
+    local = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(tz_name))
+    first_open = min(sessions)[0]
+    for day_offset in range(0, 8):
+        candidate = local.replace(hour=first_open[0], minute=first_open[1],
+                                  second=0, microsecond=0) + timedelta(days=day_offset)
+        if candidate > local and candidate.weekday() < 5:
+            return round((candidate - local).total_seconds() / 60.0, 1)
+    return 0.0
 
 
 def open_markets(markets: list[str], now: datetime | None = None) -> list[str]:

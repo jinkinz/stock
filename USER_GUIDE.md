@@ -116,7 +116,7 @@ results you trust, then start live with a small budget.
 | **Duration (min)** | Session length; trading stops automatically after this | 390 (one US trading day) |
 | **Max Loss ($)** | Circuit breaker — all buying stops if total P&L drops below −this | 2–5% of budget |
 | **Max Trade Value ($)** | Cap on any single trade | ≤ 25% of budget |
-| **Max Symbols** | How many discovered symbols to scan (0 = "all", internally capped at 2000 for API-rate reasons) | 100–500 |
+| **Candidate pool** | How many symbols the scan draws candidates from (25–2000). A bigger pool means better candidates, but does **not** raise how many can be *traded* — that ceiling is the candle budget (40 intraday / 150 swing), shown live under the field. Wider is not automatically better: in testing a larger pool produced more trades of lower average quality | 200 intraday / 500 swing |
 | **Markets** | US / HK / SG | US |
 | **Trading Mode** | Paper / Live | Paper |
 | **Approval** | Manual / Auto | Manual |
@@ -191,7 +191,60 @@ The same data is available at `GET /api/metrics?window=session|day|week|all`,
 which additionally returns the metrics broken down by exit reason and by AI
 strategy style.
 
-### 5.0 Horizon — intraday or swing
+### 4.1 Pre-session watchlist (differs by horizon)
+
+By default the scanner ranks the universe by **yesterday's** turnover, which
+answers "what was liquid" rather than "what is likely to move today".
+
+With the watchlist on, the app narrows the universe before trading starts — but
+**what it ranks on depends on your Horizon**, because the right metric is not
+the same for both:
+
+| Horizon | Screen | Why |
+|---|---|---|
+| **Day trading** | Pre-market **gappers** — gap size weighted by pre-market volume | A gap is a one-session event, which is exactly the timeframe an intraday position lives in |
+| **Swing** | **20-day leaders** — strongest over the window *and* near their own highs | A one-session gap is noise across a ten-day hold, and gaps frequently fade. Buying one and holding means eating the fade |
+
+A name up 22% over the window but sitting at the bottom of its range is *not* a
+leader — the move already happened and reversed — so it is excluded.
+
+A 3% gap on real pre-market volume outranks an 8% gap on a handful of shares —
+thin pre-market books produce large percentage moves that are quote artefacts,
+not positions anyone took. Only gap-**ups** are listed, because the app cannot
+short: ranking a stock that collapsed 9% would fill the watchlist with names it
+is structurally unable to act on.
+
+It falls back to the normal universe automatically when a market has no
+pre-open session (HK and SG here) or nothing has traded yet. The watchlist is
+shown as its own card once built and expires after 12 hours.
+
+**What it does not do:** pick "catalyst-driven" names. Longbridge exposes no
+news, earnings or calendar feed, so a model shown only price and volume cannot
+tell a real catalyst from noise — it can only produce a confident guess. The
+ranking uses the two things that are actually measurable.
+
+### 5.0 Horizon — the first thing to set
+
+It is the first control in the sidebar because it changes eight other settings,
+the candles the indicators are built from, and which AI styles are even offered.
+Switching swaps in that horizon's saved tuning — your day-trading numbers are
+kept, not overwritten.
+
+| | Day Trading | Swing |
+|---|---|---|
+| Time control | **Session length** in hours (6.5 = one US day) | **Max hold** in days — closes a stale position regardless of P&L |
+| Scan cadence | seconds | minutes (900s = 15 min) |
+| Flatten at end | available | hidden — sessions never expire |
+| AI styles offered | Conservative, FIFO, Scalp, Aggressive | Conservative, Swing, Aggressive |
+
+**Why the AI styles differ.** *FIFO* is written around a session countdown
+("reach the target before time runs out") — meaningless when there is no
+deadline. *Scalp* targets +0.3% per trade, which is below the round-trip cost
+at every position size measured, so it loses money by construction. Neither is
+offered in swing mode. *Conservative* and *Aggressive* are risk postures and
+work on both.
+
+### 5.0a Horizon — what actually changes under the hood
 
 The **Horizon** setting is the single most consequential choice in the app,
 because it decides whether your budget can clear its own trading costs.

@@ -21,7 +21,7 @@ from risk import COOLDOWN_MINUTES, RiskState, check_limits  # noqa: E402
 
 
 def settings(**kwargs) -> Settings:
-    base = dict(max_concurrent_positions=0, daily_budget=0.0,
+    base = dict(max_concurrent_positions=0, budget=0.0, daily_turnover_multiple=0.0,
                 daily_loss_limit=0.0, cooldown_after_losses=0)
     base.update(kwargs)
     return Settings(**base).normalized()
@@ -51,7 +51,7 @@ class ExchangeLocalDayTest(unittest.TestCase):
 class DailyBudgetTest(unittest.TestCase):
     def setUp(self):
         self.state = RiskState()
-        self.settings = settings(daily_budget=1000.0)
+        self.settings = settings(budget=1000.0, daily_turnover_multiple=1.0)
 
     def check(self, notional, now=UTC_NOON):
         return check_limits(self.settings, 0, self.state, "AAPL.US", notional, now)
@@ -63,7 +63,7 @@ class DailyBudgetTest(unittest.TestCase):
         self.state.record_buy("AAPL.US", 900.0, UTC_NOON)
         denial = self.check(200.0)
         self.assertIsNotNone(denial)
-        self.assertIn("daily budget", denial)
+        self.assertIn("deployment", denial)
 
     def test_exactly_at_the_budget_is_allowed(self):
         self.state.record_buy("AAPL.US", 600.0, UTC_NOON)
@@ -83,8 +83,8 @@ class DailyBudgetTest(unittest.TestCase):
         tomorrow = UTC_NOON + timedelta(days=1)
         self.assertIsNone(self.check(100.0, now=tomorrow))
 
-    def test_zero_budget_disables_the_rule(self):
-        self.settings = settings(daily_budget=0.0)
+    def test_zero_multiple_disables_the_rule(self):
+        self.settings = settings(budget=1000.0, daily_turnover_multiple=0.0)
         self.state.record_buy("AAPL.US", 1_000_000.0, UTC_NOON)
         self.assertIsNone(self.check(999_999.0))
 
@@ -201,7 +201,7 @@ class PersistenceTest(unittest.TestCase):
         state = RiskState()
         state.record_buy("AAPL.US", 1000.0, UTC_NOON)
         restored = RiskState.from_json(state.to_json())
-        denial = check_limits(settings(daily_budget=1000.0), 0, restored,
+        denial = check_limits(settings(budget=1000.0, daily_turnover_multiple=1.0), 0, restored,
                               "AAPL.US", 100.0, UTC_NOON)
         self.assertIsNotNone(denial)
 

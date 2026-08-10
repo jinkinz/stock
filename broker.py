@@ -345,6 +345,32 @@ class PaperBroker:
         return 50.0 + random.random() * 250.0
 
 
+def _pre_market_fields(item) -> dict:
+    """Pre-market price/gap/turnover from a SecurityQuote, or zeros.
+
+    Longbridge exposes `pre_market_quote` as a PrePostQuote. Not every market
+    has a pre-open session and it is empty outside those hours, so every field
+    degrades to 0.0 rather than raising — callers must treat 0.0 as "no
+    pre-market data", never as "unchanged".
+    """
+    pre = getattr(item, "pre_market_quote", None)
+    if pre is None:
+        return {}
+    def num(attr: str) -> float:
+        try:
+            return float(getattr(pre, attr, 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    price, prev = num("last_done"), num("prev_close")
+    if price <= 0:
+        return {}
+    return {
+        "pre_market_price": price,
+        "pre_market_change_pct": round((price / prev - 1.0) * 100, 3) if prev > 0 else 0.0,
+        "pre_market_turnover": num("turnover"),
+    }
+
+
 class LongbridgeBroker:
     def __init__(self) -> None:
         try:
@@ -421,6 +447,7 @@ class LongbridgeBroker:
             # e.g. "TradeStatus.Normal" -> "normal". Anything else is a symbol
             # the exchange is not trading normally right now.
             trade_status=str(getattr(item, "trade_status", "") or "normal").rsplit(".", 1)[-1].lower(),
+            **_pre_market_fields(item),
         )
 
     def quote(self, symbol: str) -> Quote:

@@ -321,6 +321,19 @@ body {
 .viability-detail { color: var(--ink); opacity: .9; }
 .viability-fix { margin-top: 6px; color: var(--muted); }
 
+/* One save button, visually attached to everything it saves. */
+.save-bar {
+  border-top: 1px solid var(--border);
+  margin-top: 10px; padding-top: 12px;
+}
+
+/* ── Pre-market watchlist ── */
+.pm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding: 14px 16px; }
+.pm-item { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.pm-sym { font-weight: 700; font-size: 13px; }
+.pm-gap { font-size: 18px; font-weight: 800; margin-top: 2px; }
+.pm-vol { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
 /* ── Performance ── */
 .perf-controls { display: flex; align-items: center; gap: 10px; }
 .perf-window {
@@ -374,7 +387,17 @@ body {
 /* ── Form elements ── */
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
-.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* Two-up rows: inputs must line up even when one label wraps to two lines,
+   which any label carrying a hint ("0 = unlimited") will do at this width.
+   Grid items stretch to the tallest cell, and the label absorbs the spare
+   height, so the input always sits at the bottom of its cell. Labels stay
+   top-aligned; only the gap above the input varies. */
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: stretch; }
+.field-row > .field { height: 100%; }
+.field-row > .field > label { flex: 1 1 auto; }
+/* Keep a hint on the label's own line where it fits, rather than orphaning a
+   single word onto line two. */
+.field label .hint-inline { display: inline-block; }
 
 input[type=number], input[type=text], textarea, select {
   background: var(--bg);

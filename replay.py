@@ -54,7 +54,7 @@ from strategy import MomentumStrategy
 # means a sell site was added without tagging it.
 VALID_EXIT_REASONS = {
     "profit_lock", "stop_loss", "trailing_stop",
-    "ai_sell", "strategy_sell", "session_end", "manual",
+    "ai_sell", "strategy_sell", "session_end", "max_hold", "manual",
 }
 
 # Deliberately broad and volatile. The signal engine is selective — it needs
@@ -338,7 +338,7 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
     engine = app.TradingEngine()
     # Candle re-fetch is throttled by WALL-CLOCK seconds, which would freeze
     # indicators at bar 1 in a loop that finishes in seconds.
-    engine.CANDLE_REFRESH_SECONDS = 0.0
+    engine.CANDLE_REFRESH_OVERRIDE = 0.0
 
     ledger_before = 0
     print(f"\nReplaying {length - warmup} bars across {len(replay_symbols)} symbols "

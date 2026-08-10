@@ -26,6 +26,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from sizing import size_position
 from models import OrderProposal, Portfolio, Settings, Side
 from strategy import MomentumStrategy
 
@@ -392,7 +393,8 @@ def _build_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> st
         f"Max loss limit:        ${settings.max_loss:.2f}",
         f"Profit target:         ${target:.2f}" + (
             f" (${getattr(settings, 'target_profit_per_hour', 0):.2f}/hour pace)"
-            if getattr(settings, "target_profit_per_hour", 0) > 0 else ""
+            if getattr(settings, "target_profit_per_hour", 0) > 0
+            and not settings.is_swing else ""
         ),
         f"Realized P&L:          ${realized:.4f}",
         f"Unrealized P&L:        ${unrealized:.4f}",
@@ -400,7 +402,12 @@ def _build_prompt(signals: list, portfolio: Portfolio, settings: Settings) -> st
         f"Still need:            ${still_needed:.4f}",
         f"Target met?            {'YES — protect gains' if target_met else 'NO — keep working'}",
         f"Time elapsed:          {minutes_elapsed} min",
-        f"Time remaining:        {minutes_remaining} min of {settings.duration_minutes} total",
+        # A swing session never expires, so a countdown would be fiction — and
+        # the styles that key off "time left" are not offered on that horizon.
+        (f"Holding horizon:       SWING — no session deadline"
+         + (f", auto-close after {settings.max_hold_days}d" if settings.max_hold_days else "")
+         if settings.is_swing else
+         f"Time remaining:        {minutes_remaining} min of {settings.duration_minutes} total"),
         f"Urgency:               {urgency}",
     ]
 
@@ -595,7 +602,7 @@ class AIStrategy:
             self._strategy = original
 
             raw = _call_ai(self._provider, self._model, SYSTEM_PROMPT, user_prompt)
-            proposals = self._parse_proposals(raw, quotes, portfolio, settings)
+            proposals = self._parse_proposals(raw, quotes, portfolio, settings, signals)
             self._last_call = now
             self._last_fingerprint = fingerprint
             AI_STATUS.connected = True
@@ -608,7 +615,8 @@ class AIStrategy:
             AI_STATUS.fallback_count += 1
             return signals, fallback_proposals
 
-    def _parse_proposals(self, raw: str, quotes: list, portfolio: Portfolio, settings: Settings) -> list[OrderProposal]:
+    def _parse_proposals(self, raw: str, quotes: list, portfolio: Portfolio,
+                         settings: Settings, signals: list | None = None) -> list[OrderProposal]:
         text = raw.strip()
         # Strip markdown fences
         if "```" in text:
@@ -659,10 +667,27 @@ class AIStrategy:
                     ))
 
             elif action == "buy" and held == 0:
-                # Safety cap: never exceed 35% of cash or max_trade_value
+                # Safety cap: never exceed 35% of cash or max_trade_value.
                 max_spend = min(settings.max_trade_value, portfolio.cash * 0.35)
                 max_qty = max_spend / quote.price if quote.price > 0 else 0
                 qty = round(min(raw_qty, max_qty), 6)
+                # The AI picks WHAT to buy; risk sizing decides HOW MUCH is
+                # survivable. Without this clamp `risk_per_trade_pct` silently
+                # applied to rule-based trades only, so the same setting meant
+                # different things depending on which brain was driving.
+                if settings.use_atr_sizing:
+                    diag = next((s.diagnostics for s in (signals or [])
+                                 if s.symbol == symbol and s.diagnostics), None)
+                    sized = size_position(
+                        price=quote.price, atr=getattr(diag, "atr", 0.0) or 0.0,
+                        equity=portfolio.equity(), spendable=portfolio.cash,
+                        max_trade_value=settings.max_trade_value,
+                        risk_per_trade_pct=settings.risk_per_trade_pct,
+                        atr_stop_multiple=settings.atr_stop_multiple,
+                        use_atr_sizing=True,
+                        max_concurrent_positions=settings.max_concurrent_positions)
+                    if sized.method == "atr" and sized.quantity > 0:
+                        qty = round(min(qty, sized.quantity), 6)
                 if qty > 0 and qty * quote.price <= portfolio.cash:
                     proposals.append(OrderProposal(
                         symbol=symbol, side=Side.BUY, quantity=qty,

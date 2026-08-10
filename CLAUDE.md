@@ -37,9 +37,11 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
 | `replay.py` | Dev harness: replays real candles through the real engine to prove the fill → ledger path works. `ReplayBroker` subclasses `PaperBroker` (fills/fees inherited unchanged), serves day-to-date quote context from bars. Not a backtest — judge the checks, not the P&L |
 | `fees.py` | Per-market brokerage fee schedules (`FeeComponent`/`FeeSchedule`). SG is MEASURED from real contract notes and `verified=True`; US/HK are flagged estimates. Unknown markets fall back to a flat charge — paper fills must never be free |
 | `calibrate_fees.py` | Read-only: compares modelled fees against real `charge_detail` from order history. Run after any real fill to correct `fees.py` with evidence |
-| `risk.py` | `RiskState` + `check_limits()` — portfolio protections: concentration cap, daily deployment budget, daily loss halt, loss-streak cooldown. Days are EXCHANGE-local; `daily_budget` counts cumulative deployment, not currently-held. Persisted in paper_state.json so limits survive restarts |
+| `premarket.py` | Pre-session watchlist, TWO screens by horizon: intraday = pre-market gappers, swing = 20-day leaders (strength AND near its own highs). Selecting on a one-session gap for a multi-day hold is a horizon mismatch. Pure. Ranks by gap × log-scaled pre-market turnover, gap-UPS only (the engine cannot short), with floors on both gap size and volume. Deliberately has NO AI catalyst filter: with no news API a model shown price+volume can only guess |
+| `risk.py` | `RiskState` + `check_limits()` — portfolio protections: concentration cap, daily deployment budget, daily loss halt, loss-streak cooldown. Days are EXCHANGE-local; `daily_turnover_multiple` x budget is the daily deployment cap (derived, not entered) and counts CUMULATIVE deployment, not currently-held. Persisted in paper_state.json so limits survive restarts |
 | `sizing.py` | `size_position()` — ATR risk-based sizing (pure, no I/O). Every position risks the same % of equity; volatile symbols get fewer shares. Clamped by max_trade_value → 25% of cash → available cash. Falls back to flat sizing when ATR is missing and SAYS SO in `reason`. **Timeframe-sensitive**: intraday ATR is tiny, so the same risk % implies a far larger position than on daily bars |
 | `metrics.py` | Pure functions over closed round trips: win rate, expectancy, profit factor, drawdown, fees, breakdowns by exit_reason/strategy. No I/O, no app imports — unit-tested in `tests/test_metrics.py` |
+| — | **Candle budget is the real trading ceiling.** `CANDLE_SPEC[horizon][3]` (intraday 40, swing 150) is how many symbols get indicators per tick; the convergence gate treats missing indicators as NOT confirmed, so a symbol without candles can never be bought. It sat at 15 while the universe ran to 2000, making "Max Symbols" imply an opportunity it could not deliver. A wide universe is still useful — it is the pool the top movers are drawn from — but it does NOT raise this ceiling. `_coverage_summary()` surfaces the relationship. |
 | `state/` | JSON persistence: paper_state.json, trade_log.jsonl (per-fill), trades_closed.jsonl (per round trip), audit_log.jsonl (rotates at 5MB), sessions_log.jsonl |
 | `static/` | index.html + app.js (SSE client, render functions) + styles.css |
 
@@ -145,6 +147,67 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
 - `python3 replay.py --split 0.6` splits the window into
   in-sample/out-of-sample. Every measurement without it is in-sample and can be
   regime-concentrated — the shipped gate-5 default is, notably.
+- **Defaults are constraint-derived, NOT backtest-tuned.** Each shipped value
+  follows from arithmetic that holds regardless of window: the target clears
+  round-trip cost at the default trade size; `risk_per_trade_pct` is set so a
+  position lands near 15% of equity at that horizon's typical ATR (intraday
+  0.10%, swing 0.75% — the scale differs ~8x); `max_scan_symbols` is a multiple
+  of the candle budget so selection is real. Tuning these to maximise a replay
+  is curve-fitting — the train/test split already showed the corrected swing
+  config is overfit. Change them only with forward evidence.
+  The dataclass defaults MUST equal `HORIZON_DEFAULTS["intraday"]`, or
+  switching horizon and back silently changes settings. HTML `value=` attrs
+  must match them too — they are a second copy that drifts silently.
+- `daily_turnover_multiple` is a CHURN cap expressed as a multiple of capital,
+  not an absolute figure — it scales with the account and spares the user
+  dividing capital by trading days. Absolute dollars are derived in
+  `Settings.daily_deployment_cap()`. It bites hardest INTRADAY (recycling is
+  where fees compound) and is close to inert in swing; the old name "Daily
+  Budget" read as a capital cap and confused exactly that.
+- `max_scan_symbols` has NO sentinel: 0 or negative falls back to the horizon
+  default, values are clamped to 25..2000. "0 = unlimited" made the
+  least-recommended value the most tempting one to type.
+- **Horizon audit checklist.** Swing was retrofitted onto an intraday-shaped
+  app, so intraday constants keep surviving where the switch does not reach.
+  Before adding ANY time-based constant, check it against both horizons
+  (intraday ticks 60s / candles 55s; swing ticks 900s / candles 900s). Known
+  couplings, all now fixed and regression-tested in
+  `tests/test_horizon_consistency.py`:
+    * `CANDLE_REFRESH_OVERRIDE` is an override, NOT a cap — `min()` there
+      silently pinned swing's 900s refresh to 55s.
+    * `MomentumStrategy.indicator_ttl` must outlive the refresh interval, or
+      candle factors read as "unknown", the convergence gate treats that as
+      not-confirmed, ATR sizing falls back to flat, and swing's range/momentum
+      silently revert to their intraday forms.
+    * `proposal_ttl_seconds()` scales with the tick interval — a fixed 300s
+      expired swing proposals before the next scan.
+    * `quote_refresh_loop` sleeps 60s in swing, 10s intraday.
+    * `target_profit_per_hour` is zeroed in swing (no clock to pace against)
+      and the AI prompt omits the "/hour pace" line there. Both `target_profit`
+      and the rate are horizon profile fields, so the intraday pacing survives
+      a round trip.
+- The watchlist screen MUST match the horizon (`_build_watchlist` dispatches):
+  gappers for intraday, 20-day leaders for swing. `config_fingerprint` records
+  which (`gappers`/`leaders`/`turnover`) so the two never pool in the results
+  table.
+- Watchlist runs in `tick()`'s **markets-closed** branch (that is
+  the only time it is useful) when any selected market opens within
+  `PREMARKET_WINDOW_MINUTES`. It outranks turnover discovery in
+  `_resolve_universe` but never a user-set custom universe, expires after
+  `WATCHLIST_TTL_HOURS`, and falls back silently when a market has no pre-open
+  session or nothing has traded — an empty watchlist would mean scanning
+  nothing at all.
+- Horizon is the FIRST setting in the UI and gates the rest: session length
+  (hours) vs max hold (days), scan cadence, and which AI styles are offered
+  (`Settings.horizon_strategies()` / `STRATEGIES_BY_HORIZON`). `fifo` and
+  `scalp` are intraday-only — fifo's prompt is built on a session countdown,
+  scalp targets +0.3% which is below round-trip cost at every measured size.
+- `max_hold_days` is swing's replacement for `duration_minutes`: closes a
+  position held that long regardless of P&L (`exit_reason: max_hold`), because
+  a session timer can never fire when sessions never expire.
+- The AI prompt must NOT show a countdown in swing mode — `ai_strategy.py`
+  branches on `settings.is_swing`. Feeding a fake deadline to a model that is
+  told to act on urgency is how you get invented urgency.
 - **Horizon profiles** (`models.HORIZON_FIELDS` / `HORIZON_DEFAULTS`): eight
   settings are horizon-specific (targets, stops, duration, tick interval, ATR
   risk %). `Settings.horizon_profiles` keeps a saved set per horizon;

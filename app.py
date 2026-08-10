@@ -25,10 +25,12 @@ from models import (
     to_json,
 )
 from ai_strategy import AI_STATUS, AIStrategy
-from market_hours import currency_of, market_of, markets_status, open_markets
+from market_hours import (currency_of, market_of, markets_status,
+                          minutes_until_open, open_markets)
+from premarket import has_premarket_data, rank_gappers, rank_momentum_leaders
 from metrics import compute_metrics, equal_weight_return
 from risk import RiskState, check_limits
-from strategy import MomentumStrategy, PROPOSAL_TTL_SECONDS
+from strategy import MomentumStrategy, proposal_ttl_seconds
 
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
@@ -87,6 +89,9 @@ class AppState:
         self.session_start_at: str | None = None
         self.session_start_equity: float = 0.0
         self.risk_state = RiskState()
+        self.premarket_watchlist: list[dict] = []
+        self.premarket_built_at: str = ""
+        self.watchlist_kind: str = ""
         # Symbol discovery cache — refreshed every 30 min to avoid rate limit hammering
         self._symbol_cache: list[str] = []
         self._symbol_cache_markets: list[str] = []
@@ -153,6 +158,10 @@ class AppState:
             self.session_start_at = data.get("session_start_at")
             self.session_start_equity = float(data.get("session_start_equity", 0.0))
             self.risk_state = RiskState.from_json(data.get("risk_state") or {})
+            premarket = data.get("premarket") or {}
+            self.premarket_watchlist = list(premarket.get("watchlist") or [])
+            self.premarket_built_at = str(premarket.get("built_at") or "")
+            self.watchlist_kind = str(premarket.get("kind") or "")
             self.proposals = [self._proposal_from_json(item) for item in data.get("proposals", [])]
         except Exception:
             return
@@ -180,6 +189,14 @@ class AppState:
             "session_start_at": self.session_start_at,
             "session_start_equity": self.session_start_equity,
             "risk_state": self.risk_state.to_json(),
+            # In-memory only until now: a restart mid-session lost the day's
+            # watchlist for good, because it can only be rebuilt in the window
+            # BEFORE an open. Its own TTL still decides when it goes stale.
+            "premarket": {
+                "watchlist": self.premarket_watchlist,
+                "built_at": self.premarket_built_at,
+                "kind": self.watchlist_kind,
+            },
         }
         STATE_FILE.write_text(json.dumps(payload, indent=2))
 
@@ -377,7 +394,7 @@ def _config_key_of(config: dict) -> str:
     return (f"{config.get('horizon', '?')}/{config.get('strategy', '?')}"
             f"/gate{config.get('min_confirmations', '?')}"
             f"/+{config.get('lock_profit_pct', 0):g}-{config.get('stop_loss_pct', 0):g}"
-            f"/{config.get('sizing', '?')}")
+            f"/{config.get('sizing', '?')}/{config.get('universe', '?')}")
 
 
 def _metric_float(value) -> float:
@@ -695,6 +712,10 @@ class TradingEngine:
             "markets_open": markets_status(STATE.settings.markets) if LB_STATUS["connected"] else None,
             "ai_status": AI_STATUS.as_dict(),
             "viability": self.viability_summary(),
+            "coverage": self._coverage_summary(),
+            "premarket": {"watchlist": STATE.premarket_watchlist[:20],
+                          "built_at": STATE.premarket_built_at,
+                          "kind": STATE.watchlist_kind},
         }
 
     def tick(self) -> dict:
@@ -716,7 +737,11 @@ class TradingEngine:
                 # scanning, no AI calls, no proposals. Only the session clock
                 # and proposal expiry keep running.
                 STATE.last_tick_at = datetime.now(timezone.utc).isoformat()
-                STATE.universe_source = "all selected markets closed — waiting for open"
+                # Markets are shut, so no trading — but this is exactly when a
+                # pre-market screen is useful: think while it is closed, act
+                # mechanically once it opens.
+                built = self._build_watchlist(broker)
+                STATE.universe_source = built or "all selected markets closed — waiting for open"
                 self._expire_stale_proposals()
                 if STATE.settings.strategy_enabled and self._session_expired():
                     STATE.settings.strategy_enabled = False
@@ -806,7 +831,9 @@ class TradingEngine:
                         "stop_loss_pct", "trailing_stop_pct", "ai_strategy_name",
                         "enforce_trade_viability", "min_confirmations",
                         "risk_per_trade_pct", "atr_stop_multiple", "use_atr_sizing",
-                        "max_concurrent_positions", "daily_budget",
+                        "max_hold_days", "use_premarket_watchlist",
+                        "premarket_watchlist_size",
+                        "max_concurrent_positions", "daily_turnover_multiple",
                         "daily_loss_limit", "cooldown_after_losses",
                         "trading_horizon"):
                 if switching and key in HORIZON_FIELDS:
@@ -818,6 +845,19 @@ class TradingEngine:
             if "approval_mode" in payload:
                 settings.approval_mode = ApprovalMode(payload["approval_mode"])
             settings.normalized().sync_horizon_profile()
+            # "Budget" reads as "the money I am trading with", but it is only
+            # the STARTING cash used on reset — so changing it left a $0 paper
+            # account that could never trade. Fund an untouched account
+            # automatically; one that has traded is left alone, because
+            # rewriting its cash would corrupt its P&L history.
+            portfolio = STATE.paper_broker.portfolio()
+            pristine = (portfolio.cash == 0 and portfolio.realized_pnl == 0
+                        and not any(p.quantity > 0 for p in portfolio.positions.values()))
+            if pristine and settings.budget > 0:
+                portfolio.cash = settings.budget
+                STATE.audit(AuditEventType.TICK, detail={
+                    "action": "funded_paper_account_from_budget",
+                    "cash": settings.budget})
             if settings.strategy_enabled and not was_enabled:
                 settings.started_at = datetime.now(timezone.utc).isoformat()
                 STATE.begin_session()
@@ -826,6 +866,55 @@ class TradingEngine:
                 STATE.close_session()
             STATE.save()
             return self.status()
+
+    def apply_recommended_defaults(self) -> dict:
+        """Adopt the recommended profile for the CURRENT horizon.
+
+        Defaults only apply to a fresh install, so a state file written before
+        a default changed keeps the old value forever — which is how a saved
+        `lock_profit_pct = 0` silently disabled the viability guard long after
+        the shipped default became 0.8. This is the explicit opt-in to catch up.
+
+        Deliberately does NOT touch budget, markets, universe, trading mode or
+        approval mode: those are the user's own decisions, not tuning.
+        """
+        from models import HORIZON_DEFAULTS
+        with STATE.lock:
+            settings = STATE.settings
+            recommended = HORIZON_DEFAULTS.get(settings.trading_horizon,
+                                               HORIZON_DEFAULTS["intraday"])
+            changed = {}
+            # A profit goal is the user's own ambition, not tuning — leave it.
+            preserve = {"target_profit", "target_profit_per_hour"}
+            for field, value in recommended.items():
+                if field in preserve:
+                    continue
+                if getattr(settings, field, None) != value:
+                    changed[field] = (getattr(settings, field, None), value)
+                    setattr(settings, field, value)
+            # Not a horizon field, but the shipped default moved with them and
+            # a stale small value is what makes trades unprofitable by
+            # construction.
+            fresh = Settings()
+            for field in ("max_trade_value", "min_confirmations", "use_atr_sizing",
+                          "max_concurrent_positions", "cooldown_after_losses",
+                          "daily_turnover_multiple",
+                          "enforce_trade_viability", "use_premarket_watchlist"):
+                value = getattr(fresh, field)
+                if getattr(settings, field, None) != value:
+                    changed[field] = (getattr(settings, field, None), value)
+                    setattr(settings, field, value)
+            settings.normalized().sync_horizon_profile()
+            STATE.audit(AuditEventType.TICK, detail={
+                "action": "apply_recommended_defaults",
+                "horizon": settings.trading_horizon,
+                "changed": {k: f"{a} -> {b}" for k, (a, b) in changed.items()},
+            })
+            STATE.save()
+            result = self.status()
+            result["defaults_applied"] = {k: {"from": a, "to": b}
+                                          for k, (a, b) in changed.items()}
+            return result
 
     def reset_paper(self, starting_cash: float | None = None) -> dict:
         with STATE.lock:
@@ -974,7 +1063,15 @@ class TradingEngine:
         answerable before trading, not after."""
         from fees import assess_trade
         settings = STATE.settings
-        notional = settings.max_trade_value
+        # The size that will actually be traded, not the configured ceiling:
+        # sizing clamps every position to a fraction of available cash, so a
+        # $2,500 cap on a $250 account buys $60 of stock. Judging viability on
+        # the ceiling would report "fine" for trades that can never happen.
+        from sizing import cash_fraction_for
+        cash = STATE.paper_broker.portfolio().equity() or settings.budget
+        affordable = cash * cash_fraction_for(settings.max_concurrent_positions)
+        notional = min(settings.max_trade_value, affordable) if affordable > 0 \
+            else settings.max_trade_value
         price = self._reference_price()
         markets = settings.markets or ["US"]
         per_market = {}
@@ -982,11 +1079,26 @@ class TradingEngine:
             verdict = assess_trade(market, notional, price,
                                    settings.lock_profit_pct, self._slippage_bps())
             per_market[market] = verdict.as_dict()
+        # "Raise trade size to $574" is useless advice if 25% of your cash is
+        # $250 — the real fix is more capital or a bigger target. Flag which.
+        for verdict in per_market.values():
+            floor = verdict.get("min_viable_notional", 0.0)
+            verdict["reachable"] = bool(floor and affordable > 0 and floor <= affordable)
+            verdict["affordable_notional"] = round(affordable, 2)
         assessable = [v for v in per_market.values() if v["assessable"]]
         return {
             "per_market": per_market,
             "reference_price": round(price, 2),
-            "trade_value": notional,
+            "trade_value": round(notional, 2),
+            "trade_value_capped_by_cash": notional < settings.max_trade_value,
+            # So the figure is traceable rather than looking invented.
+            "sizing_basis": {
+                "equity": round(cash, 2),
+                "cash_fraction": cash_fraction_for(settings.max_concurrent_positions),
+                "max_positions": settings.max_concurrent_positions,
+                "max_trade_value": settings.max_trade_value,
+                "account_cash": round(STATE.paper_broker.portfolio().cash, 2),
+            },
             "target_pct": settings.lock_profit_pct,
             "enforced": settings.enforce_trade_viability,
             # Any market that cannot pay for itself is worth shouting about.
@@ -1321,7 +1433,7 @@ class TradingEngine:
                 age = (now - datetime.fromisoformat(proposal.created_at)).total_seconds()
             except Exception:
                 continue
-            if age > PROPOSAL_TTL_SECONDS:
+            if age > proposal_ttl_seconds(STATE.settings.tick_interval_seconds):
                 proposal.status = OrderStatus.REJECTED
                 proposal.error = f"Auto-expired after {int(age)}s (manual approval timeout)."
                 STATE.audit(AuditEventType.REJECT, symbol=proposal.symbol,
@@ -1340,7 +1452,106 @@ class TradingEngine:
         started = datetime.fromisoformat(STATE.settings.started_at)
         return datetime.now(timezone.utc) >= started + timedelta(minutes=STATE.settings.duration_minutes)
 
+    # ── Pre-market watchlist ─────────────────────────────────────────────
+    # How close to the bell the screen becomes worth running. Earlier than this
+    # the pre-market book is empty or stale; the point is to read TODAY's
+    # prints, not last night's.
+    PREMARKET_WINDOW_MINUTES = 150
+    # Screening the full working set would cost hundreds of quote calls for
+    # data most of which has no pre-market print at all.
+    PREMARKET_SCAN_CAP = 400
+
+    # Daily candles for a leader screen cost one call each, so the swing
+    # screen looks at a shortlist rather than the whole working set.
+    LEADER_SCAN_CAP = 120
+
+    def _build_watchlist(self, broker) -> str:
+        """Narrow the universe before trading starts, using the metric that
+        matches the horizon. Returns a status string, or "" to leave the
+        caller's message alone."""
+        settings = STATE.settings
+        if not settings.use_premarket_watchlist or settings.premarket_watchlist_size <= 0:
+            return ""
+        if self._watchlist_is_fresh():
+            return ""                      # already built for this session
+        if settings.is_swing:
+            return self._build_leader_watchlist(broker)
+        return self._build_gapper_watchlist(broker)
+
+    def _build_leader_watchlist(self, broker) -> str:
+        """Swing: rank by strength over the SAME window the signal engine
+        measures on. A one-session gap is noise at a multi-day scale, and gaps
+        fade — selecting on one and then holding for days is a horizon
+        mismatch."""
+        from strategy import compute_indicators
+        settings = STATE.settings
+        candidates = self._resolve_universe(broker)[: self.LEADER_SCAN_CAP]
+        if not candidates:
+            return ""
+        period, count, _, _ = self.CANDLE_SPEC["swing"]
+        indicators: dict = {}
+        for symbol in candidates:
+            try:
+                candles = broker.candles(symbol, period=period, count=min(count, 60))
+            except Exception:
+                continue
+            if len(candles) < 21:
+                continue
+            ind = compute_indicators(candles)
+            if ind:
+                indicators[symbol] = (candles[-1].get("close", 0.0), ind)
+        leaders = rank_momentum_leaders(indicators, limit=settings.premarket_watchlist_size)
+        if not leaders:
+            return ""
+        STATE.premarket_watchlist = [l.as_dict() for l in leaders]
+        STATE.premarket_built_at = self._now().isoformat()
+        STATE.watchlist_kind = "leaders"
+        top = ", ".join(f"{l.symbol} {l.change_pct:+.0f}%" for l in leaders[:3])
+        return (f"swing leaders watchlist: {len(leaders)} names by 20-day strength "
+                f"— top: {top}")
+
+    def _build_gapper_watchlist(self, broker) -> str:
+        """Intraday: rank tomorrow's candidates by pre-market gap."""
+        settings = STATE.settings
+        soon = [m for m in settings.markets
+                if 0 < minutes_until_open(m) <= self.PREMARKET_WINDOW_MINUTES]
+        if not soon:
+            return ""
+        candidates = [s for s in self._resolve_universe(broker)
+                      if market_of(s) in soon][: self.PREMARKET_SCAN_CAP]
+        if not candidates:
+            return ""
+        try:
+            quotes = broker.quotes(candidates)
+        except Exception:
+            return ""
+        if not has_premarket_data(quotes):
+            # No pre-open session, or nothing has traded yet. Falling back is
+            # correct; an empty watchlist would mean scanning nothing at all.
+            return ""
+        gappers = rank_gappers(quotes, limit=settings.premarket_watchlist_size)
+        if not gappers:
+            return ""
+        STATE.premarket_watchlist = [g.as_dict() for g in gappers]
+        STATE.premarket_built_at = self._now().isoformat()
+        STATE.watchlist_kind = "gappers"
+        top = ", ".join(f"{g.symbol} {g.gap_pct:+.1f}%" for g in gappers[:3])
+        return (f"pre-market watchlist: {len(gappers)} gappers for "
+                f"{'/'.join(soon)} — top: {top}")
+
     def _resolve_universe(self, broker) -> list[str]:
+        # 0. The pre-market watchlist SEEDS the pool, it does not replace it.
+        #    Replacing froze the universe at 20 names chosen before the bell, so
+        #    a stock that broke out at 11am with no pre-market gap could never
+        #    be seen — while the ranking that picks candidates re-runs every
+        #    tick and had nothing new to look at. Widening costs nothing: 20
+        #    and 200 symbols are the same single quote call.
+        #    Watchlist names go first so they survive the cap.
+        watchlist_seed: list[str] = []
+        if (STATE.settings.use_premarket_watchlist and STATE.premarket_watchlist
+                and not STATE.settings.universe and self._watchlist_is_fresh()):
+            watchlist_seed = [g["symbol"] for g in STATE.premarket_watchlist]
+
         # 1. User-defined custom universe always wins
         if STATE.settings.universe:
             STATE.universe_source = "custom"
@@ -1369,20 +1580,41 @@ class TradingEngine:
                 STATE._symbol_cache_at = time.monotonic()
 
         if STATE._symbol_cache:
-            cap = STATE.settings.max_scan_symbols
-            if cap == 0:
-                # "Unlimited" still needs a feasibility ceiling: Longbridge
-                # discovery returns 30k+ US symbols, but quoting them takes
-                # 150+ HTTP calls per tick (rate limit: ~10 req/s), so a full
-                # scan can't finish inside one tick interval.
-                cap = self.MAX_UNLIMITED_SCAN
+            # normalized() guarantees a positive, bounded value — the old
+            # "0 = unlimited" sentinel is gone.
+            cap = min(STATE.settings.max_scan_symbols, self.MAX_UNLIMITED_SCAN)
             scanned = STATE._symbol_cache[:cap]
+            if watchlist_seed:
+                merged = list(dict.fromkeys(watchlist_seed + scanned))[:cap]
+                STATE.universe_source = (
+                    f"{len(watchlist_seed)} {STATE.watchlist_kind} (built "
+                    f"{STATE.premarket_built_at[11:16]} UTC) + {len(merged) - len(watchlist_seed)} "
+                    f"ranked \u2014 re-ranked every scan")
+                return merged
             STATE.universe_source = f"Longbridge discovery cache: {len(STATE._symbol_cache)} found, scanning {len(scanned)}"
             return scanned
 
         # 3. Fall back to expanded DEFAULT_UNIVERSES sample list
+        fallback = STATE.settings.active_universe()
+        if watchlist_seed:
+            merged = list(dict.fromkeys(watchlist_seed + fallback))[:STATE.settings.max_scan_symbols]
+            STATE.universe_source = (f"{len(watchlist_seed)} {STATE.watchlist_kind} + "
+                                     f"{len(merged) - len(watchlist_seed)} sample \u2014 re-ranked every scan")
+            return merged
         STATE.universe_source = "sample fallback (set Longbridge credentials for full scan)"
-        return STATE.settings.active_universe()
+        return fallback
+
+    # A watchlist is only good for the session it was built for.
+    WATCHLIST_TTL_HOURS = 12
+
+    def _watchlist_is_fresh(self) -> bool:
+        if not STATE.premarket_built_at:
+            return False
+        try:
+            built = datetime.fromisoformat(STATE.premarket_built_at)
+        except ValueError:
+            return False
+        return (self._now() - built).total_seconds() < self.WATCHLIST_TTL_HOURS * 3600
 
     # Bulk-rank at most this many discovered symbols (50 batches of 200);
     # beyond that the one-off ranking pass itself would take too long.
@@ -1455,16 +1687,50 @@ class TradingEngine:
     # days off those signals is a horizon mismatch. On daily bars the same
     # indicators measure 9 and 21 days.
     #   (period, count, refresh seconds)
+    #   (period, count, refresh seconds, candle budget)
+    # The budget is how many symbols get indicators per tick — and since the
+    # convergence gate treats missing indicators as NOT confirmed, it is the
+    # real ceiling on how many symbols can be TRADED. It sat at 15 while the
+    # universe ran to 2000, so scanning wider bought nothing at all.
+    # Sized against the rate limit: sequential calls self-pace at ~150ms, so
+    # 40 calls is ~6s of a 60s tick, well inside ~10 req/s alongside quotes.
     CANDLE_SPEC = {
-        "intraday": ("Min_1", 120, 55.0),
+        "intraday": ("Min_1", 120, 55.0, 40),
         # Daily bars only change once a day; re-fetching every minute would
         # burn API calls for identical data.
-        "swing": ("Day", 250, 900.0),
+        # 15 minutes between ticks and daily bars that change once a day, so a
+        # far larger budget costs almost nothing.
+        "swing": ("Day", 250, 900.0, 150),
     }
 
+    # Floor only; the per-horizon budget above is what actually applies.
     CANDLE_CANDIDATES = 15
     _candle_fetched_at: dict[str, float] = {}
     CANDLE_REFRESH_SECONDS = 55.0
+    # None = use the horizon's own interval. Replay sets 0.0.
+    CANDLE_REFRESH_OVERRIDE: 'float | None' = None
+
+    def _coverage_summary(self) -> dict:
+        """Scanned vs actually tradable.
+
+        Scanning more symbols does not mean trading more of them: only the
+        candle budget gets indicators, and the convergence gate treats missing
+        indicators as not-confirmed. Surfacing this stops "Max Symbols" from
+        implying an opportunity it cannot deliver.
+        """
+        _, _, _, budget = self.CANDLE_SPEC.get(
+            STATE.settings.trading_horizon, self.CANDLE_SPEC["intraday"])
+        strategy = STATE.strategy
+        target = getattr(strategy, "_fallback", strategy)
+        with_indicators = sum(
+            1 for sym in getattr(target, "_indicators", {})
+            if target._fresh_indicators(sym)) if hasattr(target, "_fresh_indicators") else 0
+        return {
+            "scanned": len(STATE.last_quotes),
+            "candle_budget": budget,
+            "with_indicators": with_indicators,
+            "gate": STATE.settings.min_confirmations,
+        }
 
     def _enrich_with_candles(self, broker, quotes) -> None:
         """Fetch 1-min candles for held positions + the biggest day movers and
@@ -1479,13 +1745,22 @@ class TradingEngine:
             key=lambda q: abs(q.price / q.prev_close - 1.0),
             reverse=True,
         )
-        targets = list(dict.fromkeys(held + [q.symbol for q in movers[: self.CANDLE_CANDIDATES]]))
-        now = time.monotonic()
-        period, count, refresh = self.CANDLE_SPEC.get(
+        period, count, refresh, budget = self.CANDLE_SPEC.get(
             STATE.settings.trading_horizon, self.CANDLE_SPEC["intraday"])
-        # The replay harness overrides the refresh interval to 0 so indicators
-        # move bar to bar; honour that.
-        refresh = min(refresh, self.CANDLE_REFRESH_SECONDS)
+        targets = list(dict.fromkeys(held + [q.symbol for q in movers[:budget]]))
+        now = time.monotonic()
+        # Replay sets this to 0 so indicators move bar to bar. It is an
+        # OVERRIDE, not a cap: using min() here silently pinned swing's 900s
+        # refresh to the intraday 55s, refetching daily candles every minute
+        # for data that changes once a day.
+        if self.CANDLE_REFRESH_OVERRIDE is not None:
+            refresh = self.CANDLE_REFRESH_OVERRIDE
+        # Indicators must stay fresh across a whole refresh cycle, or every
+        # candle-derived factor reads as unknown for most of the interval.
+        strategy = STATE.strategy
+        target = getattr(strategy, "_fallback", strategy)
+        if hasattr(target, "indicator_ttl"):
+            target.indicator_ttl = max(target.INDICATOR_TTL, refresh * 3)
         for symbol in targets:
             if now - self._candle_fetched_at.get(symbol, 0.0) < refresh:
                 continue
@@ -1517,7 +1792,9 @@ class TradingEngine:
         portfolio_positions = STATE.broker().portfolio().positions
         has_atr_stop = any(p.stop_price > 0 and p.quantity > 0
                            for p in portfolio_positions.values())
-        if lock_pct <= 0 and stop_pct <= 0 and trail_pct <= 0 and not has_atr_stop:
+        max_hold_days = settings.max_hold_days
+        if (lock_pct <= 0 and stop_pct <= 0 and trail_pct <= 0
+                and not has_atr_stop and max_hold_days <= 0):
             return []
         # Tool-owned positions only: a stop loss must never reach into shares
         # the user bought themselves.
@@ -1533,7 +1810,20 @@ class TradingEngine:
             gain_pct = (quote.price / position.avg_cost - 1.0) * 100
             reason = None
             tag = ""
-            if lock_pct > 0 and gain_pct >= lock_pct:
+            held_days = 0.0
+            if max_hold_days > 0 and position.opened_at:
+                try:
+                    opened = datetime.fromisoformat(position.opened_at)
+                    held_days = (self._now() - opened).total_seconds() / 86400
+                except ValueError:
+                    held_days = 0.0
+            if max_hold_days > 0 and held_days >= max_hold_days:
+                # The swing equivalent of a session timer: capital sitting in a
+                # position that has not resolved is capital doing nothing.
+                reason = (f"Max hold reached: held {held_days:.1f} days "
+                          f"(limit {max_hold_days}), P&L {gain_pct:+.2f}%.")
+                tag = "max_hold"
+            elif lock_pct > 0 and gain_pct >= lock_pct:
                 reason = f"Profit lock: +{gain_pct:.2f}% ≥ {lock_pct:.2f}% threshold."
                 tag = "profit_lock"
             elif position.stop_price > 0 and quote.price <= position.stop_price:
@@ -1671,7 +1961,10 @@ def quote_refresh_loop() -> None:
     when auto_tick is off or between strategy ticks."""
     while True:
         try:
-            time.sleep(10)
+            # A 10s display refresh is right for intraday. For a multi-day hold
+            # it is churn — real quote calls and a full re-scan for a position
+            # that will not be touched for days.
+            time.sleep(60 if STATE.settings.is_swing else 10)
             with STATE.lock:
                 if not STATE.last_quotes:
                     continue  # nothing to refresh yet
@@ -1782,6 +2075,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(ENGINE.pause_tick())
         elif path == "/api/tick/resume":
             self._json(ENGINE.resume_tick())
+        elif path == "/api/settings/defaults":
+            self._json(ENGINE.apply_recommended_defaults())
         elif path == "/api/paper/reset":
             payload = self._read_json()
             # If caller passes starting_cash explicitly use it, otherwise fall back to budget
@@ -1957,13 +2252,14 @@ def _startup_banner() -> None:
                   f"run `python3 calibrate_fees.py`")
 
     horizon = STATE.settings.trading_horizon
-    period, count, _ = TradingEngine.CANDLE_SPEC.get(horizon, TradingEngine.CANDLE_SPEC["intraday"])
+    period, count, _, _ = TradingEngine.CANDLE_SPEC.get(horizon, TradingEngine.CANDLE_SPEC["intraday"])
     if horizon == "swing":
-        print(f"Horizon:    SWING — {period} candles, positions held overnight, "
-              f"session does not auto-expire")
+        hold = STATE.settings.max_hold_days
+        print(f"Horizon:    SWING — {period} candles, held overnight, session does "
+              f"not expire, max hold {str(hold) + 'd' if hold else 'unlimited'}")
     else:
         print(f"Horizon:    INTRADAY — {period} candles, session ends after "
-              f"{STATE.settings.duration_minutes} min")
+              f"{STATE.settings.duration_minutes / 60:.1f}h")
 
     # Can the current settings make money at all? Answer it up front.
     summary = ENGINE.viability_summary()

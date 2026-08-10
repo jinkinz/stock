@@ -73,6 +73,11 @@ class LiveGuardTestCase(unittest.TestCase):
         app.STATE.settings = Settings(
             budget=1000.0, max_trade_value=500.0, trading_mode=TradingMode.LIVE,
             approval_mode=ApprovalMode.AUTO, allow_live_trading=True,
+            # Isolate the ownership/budget guards. Small orders now trip the
+            # viability guard by default (a 0.8% target cannot clear a 1.10%
+            # round trip at this size) and that is a DIFFERENT rule, tested in
+            # test_viability.py.
+            enforce_trade_viability=False,
         ).normalized()
         app.TradingEngine._live_pending_notional = 0.0
         app.TradingEngine._live_sync_at = 0.0

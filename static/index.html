@@ -39,6 +39,16 @@
         <div class="sidebar-section-label">Settings</div>
         <form id="settingsForm" class="settings-form">
           <div class="field">
+            <label>① Horizon <span class="hint-inline">decides everything below</span></label>
+            <div class="segmented" id="horizonSeg">
+              <button type="button" data-value="intraday" class="active">Day Trading</button>
+              <button type="button" data-value="swing">Swing</button>
+            </div>
+            <div class="hint-inline" id="horizonHint" style="padding:4px 2px 0"></div>
+          </div>
+
+          <div class="sidebar-section-label" style="padding-left:0">② Capital &amp; universe</div>
+          <div class="field">
             <label>Markets</label>
             <div class="market-picks">
               <label class="chip"><input name="markets" type="checkbox" value="US" checked /><span>US</span></label>
@@ -53,8 +63,11 @@
           <div class="field-row">
             <div class="field"><label for="budget">Budget ($)</label>
               <input id="budget" name="budget" type="number" min="0" step="any" value="1000" /></div>
-            <div class="field" id="durationField"><label for="duration_minutes">Duration (min)</label>
-              <input id="duration_minutes" name="duration_minutes" type="number" min="1" value="390" /></div>
+            <div class="field" id="durationField"><label for="duration_hours">Session length (hours)</label>
+              <input id="duration_hours" type="number" min="0.5" step="0.5" value="6.5" />
+              <input id="duration_minutes" name="duration_minutes" type="hidden" value="390" /></div>
+            <div class="field" id="maxHoldField" style="display:none"><label for="maxHoldDays">Max hold (days) <span class="hint-inline">0 = unlimited</span></label>
+              <input id="maxHoldDays" type="number" min="0" step="1" value="10" /></div>
           </div>
           <div class="field-row">
             <div class="field"><label for="max_loss">Max Loss ($)</label>
@@ -62,18 +75,15 @@
             <div class="field"><label for="max_trade_value">Max Trade ($)</label>
               <input id="max_trade_value" name="max_trade_value" type="number" min="0" value="250" /></div>
           </div>
+          <label class="toggle"><input id="usePremarketWatchlist" type="checkbox" checked /><span>Pre-market watchlist</span></label>
+          <label class="toggle" id="stopAtEndField"><input id="stopAtEnd" type="checkbox" checked /><span>Close all positions at session end</span></label>
+          <label class="toggle"><input id="enforceViability" type="checkbox" checked /><span>Block trades that can't cover their costs</span></label>
+          <div class="hint-inline" style="padding:0 2px 8px">In the ~2½ hours before the bell, rank the universe by pre-market gap and pre-market volume and scan those instead of yesterday's turnover leaders. Falls back automatically when there is no pre-market session or nothing has traded.</div>
           <div class="field">
-            <label for="max_scan_symbols">Max Symbols <span class="hint-inline">0 = unlimited (not recommended)</span></label>
-            <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="0" max="500" value="50" />
+            <label for="max_scan_symbols">Candidate pool <span class="hint-inline">25–2000 symbols</span></label>
+            <input id="max_scan_symbols" name="max_scan_symbols" type="number" min="25" max="2000" step="25" value="200" />
+            <div class="hint-inline" id="coverageHint" style="padding:4px 2px 0"></div>
           </div>
-          <div class="field">
-            <label for="tradingHorizon">Horizon</label>
-            <select id="tradingHorizon" name="trading_horizon">
-              <option value="intraday">Intraday — flat by session end</option>
-              <option value="swing">Swing — hold across days</option>
-            </select>
-          </div>
-          <div class="hint-inline" style="padding:0 2px 8px">Swing uses daily candles, so the indicators measure days rather than minutes, and sessions do not auto-expire. It clears fee costs far more easily than intraday — but positions are held overnight, where a gap can open below your stop.</div>
           <div class="field">
             <label>Trading Mode</label>
             <div class="segmented" data-name="trading_mode">
@@ -88,14 +98,13 @@
               <button type="button" data-value="auto">Auto</button>
             </div>
           </div>
-          <div class="field"><label for="tick_interval_seconds">Scan interval (s)</label>
+          <div class="field"><label for="tick_interval_seconds">Scan every <span class="hint-inline" id="scanUnitHint">seconds</span></label>
             <input id="tick_interval_seconds" name="tick_interval_seconds" type="number" min="5" step="5" value="60" /></div>
           <label class="toggle danger"><input id="allow_live_trading" name="allow_live_trading" type="checkbox" /><span>Allow live orders</span></label>
-          <button class="btn-primary wide" type="submit">Save Settings</button>
         </form>
 
 
-        <div class="sidebar-section-label">AI Brain</div>
+        <div class="sidebar-section-label">③ Strategy &amp; risk</div>
         <div class="settings-form" style="padding-bottom:4px">
           <div class="field">
             <label for="aiStrategy">Strategy</label>
@@ -158,15 +167,15 @@
           </div>
           <div class="field-row">
             <div class="field">
-              <label for="dailyBudget">Daily Budget ($) <span class="hint-inline">0 = off</span></label>
-              <input id="dailyBudget" type="number" min="0" step="any" value="0" placeholder="e.g. 250" />
+              <label for="dailyTurnover">Daily turnover (×capital) <span class="hint-inline">0 = off</span></label>
+              <input id="dailyTurnover" type="number" min="0" step="0.5" value="3" />
             </div>
             <div class="field">
               <label for="dailyLossLimit">Daily Loss Limit ($)</label>
               <input id="dailyLossLimit" type="number" min="0" step="any" value="0" placeholder="e.g. 50" />
             </div>
           </div>
-          <div class="hint-inline" style="padding:0 2px 8px">Daily Budget caps capital deployed per exchange trading day, counted cumulatively — buying, selling and buying again spends it twice. Days roll over in the exchange's own timezone, and all four limits survive a restart.</div>
+          <div class="hint-inline" id="turnoverHint" style="padding:0 2px 8px"></div>
           <div class="field">
             <label for="minConfirmations">Convergence Gate <span class="hint-inline">factors that must agree</span></label>
             <select id="minConfirmations">
@@ -193,8 +202,12 @@
             <label for="aiModel">Model <span class="hint-inline">blank = default</span></label>
             <input id="aiModel" type="text" placeholder="e.g. gemini-2.5-flash" />
           </div>
-          <button id="saveAiBtn" class="btn-primary wide" type="button">Apply AI Config</button>
-          <div id="aiConfigStatus" style="font-size:11px;color:var(--muted);min-height:16px;margin-top:2px"></div>
+          <div class="save-bar">
+            <button id="saveAllBtn" class="btn-primary wide" type="button">Save All Settings</button>
+            <button id="useDefaultsBtn" class="btn-secondary wide" type="button" style="margin-top:6px">Use recommended defaults</button>
+            <div class="hint-inline" style="padding:6px 2px 0">Saves everything above — capital, horizon, strategy and risk — in one go.</div>
+            <div id="aiConfigStatus" style="font-size:11px;color:var(--muted);min-height:16px;margin-top:4px"></div>
+          </div>
         </div>
 
         <div class="sidebar-section-label">Danger Zone</div>
@@ -303,6 +316,15 @@
         <section class="card" id="backtestPanel" style="display:none">
           <div class="card-header"><h2>Backtest Results</h2></div>
           <div class="card-body" id="backtestResult"></div>
+        </section>
+
+        <!-- Pre-market watchlist — only shown once one has been built -->
+        <section class="card" id="premarketCard" style="display:none">
+          <div class="card-header">
+            <h2>Pre-market Watchlist <span class="badge" id="pmCount">0</span></h2>
+            <span class="hint-inline" id="pmBuilt"></span>
+          </div>
+          <div id="premarketBody" class="card-body"></div>
         </section>
 
         <!-- What works — configuration leaderboard -->

@@ -146,12 +146,15 @@ def check_limits(settings, open_position_count: int, state: RiskState,
             return (f"BLOCKED: {market} is down ${abs(realized):,.2f} today, at or past the "
                     f"${limit:,.2f} daily loss limit. No new buys until tomorrow.")
 
-    budget = settings.daily_budget
+    # Derived from capital x turnover multiple, so it scales with the account
+    # instead of asking the user to divide by trading days.
+    budget = settings.daily_deployment_cap()
     if budget > 0:
         deployed = state.deployed_today(market, now)
         if deployed + notional > budget:
             remaining = max(0.0, budget - deployed)
-            return (f"BLOCKED: ${deployed:,.2f} of the ${budget:,.2f} {market} daily budget "
-                    f"already deployed; this order needs ${notional:,.2f} and only "
-                    f"${remaining:,.2f} is left today.")
+            return (f"BLOCKED: ${deployed:,.2f} of today's ${budget:,.2f} {market} deployment "
+                    f"allowance is used ({settings.daily_turnover_multiple:g}x your "
+                    f"${settings.budget:,.0f} capital); this order needs ${notional:,.2f} "
+                    f"and only ${remaining:,.2f} is left today.")
     return None

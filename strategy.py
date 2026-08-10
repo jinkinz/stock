@@ -47,7 +47,17 @@ from sizing import size_position
 
 # How many ticks a proposal stays valid in manual-approval mode before
 # it is considered stale and should be ignored by the UI / auto-expiry.
-PROPOSAL_TTL_SECONDS = 300   # 5 minutes
+PROPOSAL_TTL_SECONDS = 300   # 5 minutes — floor, scaled per horizon below
+
+
+def proposal_ttl_seconds(tick_interval_seconds: int) -> float:
+    """How long a manual proposal stays valid.
+
+    A fixed 5 minutes expires a swing proposal before the next 15-minute scan
+    even happens, so it could never be approved. Give the user at least a few
+    scan cycles to decide, whatever the cadence.
+    """
+    return max(PROPOSAL_TTL_SECONDS, tick_interval_seconds * 3)
 
 # Liquidity gate: never buy a symbol whose traded value today is below this.
 # Illiquid names have wide spreads and unreliable fills.
@@ -184,9 +194,14 @@ def compute_indicators(candles: list[dict]) -> dict:
 
 class MomentumStrategy:
     # Candle indicators are considered fresh for this long
+    # Default freshness window. The engine raises this to outlive the candle
+    # refresh interval of the active horizon — if indicators expire before the
+    # next fetch, every candle-derived factor silently reads as "unknown",
+    # which the convergence gate treats as NOT confirmed.
     INDICATOR_TTL = 180.0
 
     def __init__(self) -> None:
+        self.indicator_ttl = self.INDICATOR_TTL
         self.history: dict[str, deque[float]] = {}
         self._tick_counts: dict[str, deque[int]] = {}
         self._current_ticks: dict[str, int] = {}
@@ -205,7 +220,7 @@ class MomentumStrategy:
     def _fresh_indicators(self, symbol: str) -> dict:
         import time as _time
         entry = self._indicators.get(symbol)
-        if entry and (_time.monotonic() - entry[0]) < self.INDICATOR_TTL:
+        if entry and (_time.monotonic() - entry[0]) < self.indicator_ttl:
             return entry[1]
         return {}
 
@@ -370,6 +385,7 @@ class MomentumStrategy:
                 risk_per_trade_pct=settings.risk_per_trade_pct,
                 atr_stop_multiple=settings.atr_stop_multiple,
                 use_atr_sizing=settings.use_atr_sizing,
+                max_concurrent_positions=settings.max_concurrent_positions,
             )
             if not sized.ok:
                 continue
@@ -385,6 +401,13 @@ class MomentumStrategy:
             ))
 
         return signals[:12], proposals[:5]
+
+    def scan_signals_only(self, settings: Settings, quotes: list, portfolio: Portfolio) -> list:
+        """Signals without proposals. AIStrategy exposes the same method; the
+        display paths call it on whichever strategy is active, so both must
+        have it or swapping them crashes the refresh loop."""
+        signals, _ = self.scan(settings, quotes, portfolio)
+        return signals
 
     # ------------------------------------------------------------------
     # Per-symbol signal scoring

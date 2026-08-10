@@ -458,8 +458,14 @@ reason. A silent block is worse than no block.
   that veto is **built**: a symbol the exchange is not trading normally is
   never bought (`Diagnostics.tradable`, `tests/test_tradability.py`). Buying
   into a halt is how you end up holding something you cannot exit.
-- **Pre-market AI watchlist.** An overnight pass picking what to watch. Grafts
-  naturally onto swing mode, poorly onto scalping.
+- ~~**Pre-market AI watchlist.**~~ ✅ **DONE** (quantitative half). `premarket.py`
+  ranks gappers by gap × pre-market turnover; the engine builds the watchlist in
+  the markets-closed branch of `tick()` and prefers it over turnover discovery.
+  **Two screens, dispatched by horizon**: gappers (intraday) vs 20-day leaders
+  (swing) — selecting on a one-session gap for a multi-day hold repeats the
+  horizon mismatch that Phase 2.3 fixed in the signal engine.
+  The **AI catalyst filter is deliberately not built** — no news API means a
+  model shown price+volume alone would be guessing. Verified on live data.
 - ~~**Closed-trade UI.**~~ ✅ **DONE.** `GET /api/trades?window=&limit=`
   (`closed_trades_report()`, bounded by `MAX_TRADES_RESPONSE`), a "How trades
   ended" breakdown inside the Performance card, and a collapsible **Closed

@@ -61,12 +61,12 @@ class CandleHorizonTest(unittest.TestCase):
     That difference is what makes swing mode actually swing."""
 
     def test_intraday_uses_minute_bars(self):
-        period, count, _ = app.TradingEngine.CANDLE_SPEC["intraday"]
+        period, count, _, _ = app.TradingEngine.CANDLE_SPEC["intraday"]
         self.assertEqual(period, "Min_1")
         self.assertGreaterEqual(count, 30)
 
     def test_swing_uses_daily_bars(self):
-        period, count, _ = app.TradingEngine.CANDLE_SPEC["swing"]
+        period, count, _, _ = app.TradingEngine.CANDLE_SPEC["swing"]
         self.assertEqual(period, "Day")
         self.assertGreaterEqual(count, 60, "need enough days for EMA21 + ATR14")
 

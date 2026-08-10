@@ -36,33 +36,64 @@ class OrderStatus(str, Enum):
 # SEPARATE saved profiles so switching horizon does not destroy the other one's
 # tuning — and so the two can be compared honestly.
 HORIZON_FIELDS = (
-    "duration_minutes", "stop_at_end", "lock_profit_pct", "stop_loss_pct",
+    "duration_minutes", "max_hold_days", "stop_at_end", "lock_profit_pct", "stop_loss_pct",
+    "target_profit", "target_profit_per_hour", "max_scan_symbols",
+    "daily_turnover_multiple",
     "trailing_stop_pct", "tick_interval_seconds", "risk_per_trade_pct",
     "atr_stop_multiple",
 )
+
+# Which AI styles suit which horizon. `conservative` and `aggressive` are risk
+# postures and work on both; the rest encode a holding period in their prompt.
+STRATEGIES_BY_HORIZON: dict[str, list[str]] = {
+    "intraday": ["conservative", "fifo", "scalp", "aggressive"],
+    "swing": ["conservative", "swing", "aggressive"],
+}
 
 HORIZON_DEFAULTS: dict[str, dict] = {
     "intraday": {
         # Mirrors the dataclass defaults exactly, so switching away and back
         # restores what a fresh install actually had rather than a second,
         # subtly different set of "defaults".
-        "duration_minutes": 390, "stop_at_end": True,
-        "lock_profit_pct": 0.0, "stop_loss_pct": 2.0, "trailing_stop_pct": 0.0,
+        "duration_minutes": 390, "max_hold_days": 0, "stop_at_end": True,
+        "target_profit": 0.0, "target_profit_per_hour": 0.0,
+        # Shipping with the target OFF left the viability guard unable to
+        # assess anything, so a structurally unprofitable setup passed silently.
+        "lock_profit_pct": 0.8, "stop_loss_pct": 1.0, "trailing_stop_pct": 0.0,
         "tick_interval_seconds": 60,
-        # Intraday ATR is a fraction of a percent, so a small risk % implies a
-        # huge position — see sizing.py. Kept low deliberately.
-        "risk_per_trade_pct": 0.5, "atr_stop_multiple": 2.0,
+        # Pool ~5x the candle budget (40): real selection without the ranking
+        # pass dominating.
+        "max_scan_symbols": 200,
+        # Intraday ATR is ~0.33% of price, so a 2xATR stop is ~0.66%. Risking
+        # 0.5% of equity over that implied a 76%-OF-EQUITY position — the
+        # clamps rescued it, but a clamped trade no longer risks what the
+        # setting claims. 0.10% puts a position near 15% of equity, which is
+        # what the number is supposed to mean.
+        "risk_per_trade_pct": 0.10, "atr_stop_multiple": 2.0,
+        # Intraday recycles capital, which is exactly where fees compound.
+        "daily_turnover_multiple": 3.0,
     },
     "swing": {
         # Sessions do not expire and nothing is force-flattened, so duration is
         # inert here — kept at a valid value rather than 0, which normalized()
         # would clamp to a misleading 1 minute.
-        "duration_minutes": 390, "stop_at_end": False,
+        "duration_minutes": 390, "max_hold_days": 10, "stop_at_end": False,
+        # Hourly pacing is intrinsically an intraday idea — you are racing a
+        # closing bell. A swing target is an absolute figure with no clock.
+        "target_profit": 0.0, "target_profit_per_hour": 0.0,
         # Wide enough to clear round-trip costs, which intraday targets cannot.
         "lock_profit_pct": 3.0, "stop_loss_pct": 2.0, "trailing_stop_pct": 0.0,
         # Daily bars change once a day; polling every minute is waste.
         "tick_interval_seconds": 900,
-        "risk_per_trade_pct": 1.0, "atr_stop_multiple": 2.0,
+        # ~3.3x the swing candle budget (150).
+        "max_scan_symbols": 500,
+        # Daily ATR is ~2.5% of price, so 2xATR is ~5%. 0.75% over that lands
+        # near 15% of equity — same intent as intraday, different arithmetic
+        # because the volatility scale differs by roughly 8x.
+        "risk_per_trade_pct": 0.75, "atr_stop_multiple": 2.0,
+        # Swing holds for days, so intra-day recycling barely happens; this is
+        # a backstop rather than an active constraint.
+        "daily_turnover_multiple": 1.5,
     },
 }
 
@@ -72,13 +103,22 @@ class Settings:
     symbol: str = "AAPL.US"
     markets: list[str] = field(default_factory=lambda: ["US"])
     universe: list[str] = field(default_factory=list)
-    max_scan_symbols: int = 50
+    max_scan_symbols: int = 200
     trading_mode: TradingMode = TradingMode.PAPER
     approval_mode: ApprovalMode = ApprovalMode.MANUAL
     budget: float = 0.0
+    # Intraday: session length. Meaningless in swing, where sessions never end.
     duration_minutes: int = 390
+    # Swing: close a position that has been held this many days regardless of
+    # P&L. The swing equivalent of a session timer — a position drifting
+    # sideways for a month is capital doing nothing. 0 = hold indefinitely.
+    max_hold_days: int = 0
     max_loss: float = 25.0
-    max_trade_value: float = 250.0
+    # $250 costs 1.70% round trip in the US — more than any realistic intraday
+    # target, so the shipped default was unprofitable by construction. At
+    # $2,500 the cost is 0.26% and a 0.8% target clears it with room. Sizing
+    # still clamps to 25% of available cash, so a smaller account is unaffected.
+    max_trade_value: float = 2500.0
     auto_tick_enabled: bool = False
     tick_interval_seconds: int = 60
     allow_live_trading: bool = False
@@ -87,8 +127,8 @@ class Settings:
     started_at: str | None = None
     target_profit: float = 0.0        # how much $ profit to aim for this session
     target_profit_per_hour: float = 0.0  # pacing rate — overrides target_profit if set
-    lock_profit_pct: float = 0.0      # auto-sell a position once its unrealized gain hits this % (0 = off)
-    stop_loss_pct: float = 2.0        # auto-sell a position once it loses this % from entry (0 = off)
+    lock_profit_pct: float = 0.8      # auto-sell a position once its unrealized gain hits this % (0 = off)
+    stop_loss_pct: float = 1.0        # auto-sell a position once it loses this % from entry (0 = off)
     trailing_stop_pct: float = 0.0    # auto-sell if price falls this % from its peak while in profit (0 = off)
     ai_strategy_name: str = "fifo"    # which AI strategy to use
     # "intraday" — 1-min candles, session expires after duration_minutes,
@@ -119,12 +159,23 @@ class Settings:
     # picking the best-scoring middle value would be curve-fitting.
     min_confirmations: int = 5
     # ── Risk-based position sizing (see sizing.py) ───────────────────────
-    risk_per_trade_pct: float = 0.5   # % of equity risked if the stop fires
+    risk_per_trade_pct: float = 0.10  # % of equity risked if the stop fires
     atr_stop_multiple: float = 2.0    # stop distance = N × ATR
     use_atr_sizing: bool = True       # off = flat max_trade_value sizing
     # ── Portfolio protections (see risk.py). 0 disables each one. ────────
+    # Build the day's watchlist from pre-market gappers before the bell,
+    # instead of scanning yesterday's turnover leaders.
+    use_premarket_watchlist: bool = True
+    premarket_watchlist_size: int = 20
     max_concurrent_positions: int = 5
-    daily_budget: float = 0.0         # capital deployable per exchange-local day
+    # How many times your capital may be deployed in one exchange day.
+    # Expressed as a MULTIPLE of budget rather than an absolute figure, so it
+    # scales automatically and nobody has to divide capital by trading days.
+    #   1.0 = deploy your capital once, no recycling
+    #   3.0 = up to three full round trips of the whole account in a day
+    # This is a CHURN cap, not a capital cap: buying, selling and buying again
+    # spends the allowance twice and costs two sets of fees.
+    daily_turnover_multiple: float = 3.0
     daily_loss_limit: float = 0.0     # realised loss that halts buying for the day
     cooldown_after_losses: int = 3    # N consecutive losers pauses buying
 
@@ -136,7 +187,16 @@ class Settings:
             self.markets = ["US"]
         self.budget = max(0.0, float(self.budget))
         self.duration_minutes = max(1, int(self.duration_minutes))
-        self.max_scan_symbols = max(0, min(2000, int(self.max_scan_symbols)))
+        self.max_hold_days = max(0, int(self.max_hold_days))
+        # No magic sentinel. "0" reads as "none" but used to mean "maximum",
+        # which made the least-recommended value the most tempting one. A
+        # non-positive value now falls back to this horizon's default rather
+        # than silently opening the scan to 2000.
+        scan = int(self.max_scan_symbols)
+        if scan <= 0:
+            scan = HORIZON_DEFAULTS.get(self.trading_horizon,
+                                        HORIZON_DEFAULTS["intraday"])["max_scan_symbols"]
+        self.max_scan_symbols = max(25, min(2000, scan))
         self.max_loss = max(0.0, float(self.max_loss))
         self.max_trade_value = max(0.0, float(self.max_trade_value))
         self.tick_interval_seconds = max(5, int(self.tick_interval_seconds))
@@ -150,15 +210,25 @@ class Settings:
         self.risk_per_trade_pct = max(0.0, min(100.0, float(self.risk_per_trade_pct)))
         self.atr_stop_multiple = max(0.1, float(self.atr_stop_multiple))
         self.use_atr_sizing = bool(self.use_atr_sizing)
+        self.use_premarket_watchlist = bool(self.use_premarket_watchlist)
+        self.premarket_watchlist_size = max(0, min(200, int(self.premarket_watchlist_size)))
         self.max_concurrent_positions = max(0, int(self.max_concurrent_positions))
-        self.daily_budget = max(0.0, float(self.daily_budget))
+        self.daily_turnover_multiple = max(0.0, float(self.daily_turnover_multiple))
         self.daily_loss_limit = max(0.0, float(self.daily_loss_limit))
         self.cooldown_after_losses = max(0, int(self.cooldown_after_losses))
         horizon = str(self.trading_horizon or "").strip().lower()
         self.trading_horizon = horizon if horizon in ("intraday", "swing") else "intraday"
-        # If an hourly rate is set, it drives the session target automatically —
-        # e.g. $20/hr over a 390-minute (6.5hr) session = $130 target.
-        if self.target_profit_per_hour > 0:
+        if self.is_swing:
+            # No session means no hours to pace against. Deriving a target from
+            # `duration_minutes` here would compute it from a number that is
+            # inert in this mode — and the AI prompt would then quote an
+            # "$X/hour pace" against a clock that does not exist. Zeroed rather
+            # than left inert, so nothing downstream can read a stale value;
+            # the intraday setting is preserved in that horizon's own profile.
+            self.target_profit_per_hour = 0.0
+        elif self.target_profit_per_hour > 0:
+            # Intraday: an hourly rate drives the session target automatically —
+            # e.g. $20/hr over a 390-minute (6.5hr) session = $130 target.
             self.target_profit = round(self.target_profit_per_hour * (self.duration_minutes / 60.0), 2)
         return self
 
@@ -196,6 +266,26 @@ class Settings:
         self.trading_horizon = new_horizon
         return self
 
+    def horizon_strategies(self) -> list[str]:
+        """AI styles that make sense on this horizon.
+
+        The style prompts are not horizon-neutral: `fifo` is built around a
+        session countdown and `scalp` targets +0.3%, which is below the
+        round-trip cost at every position size we measured. Offering them in
+        swing mode invites a contradiction the model cannot resolve.
+        """
+        return list(STRATEGIES_BY_HORIZON.get(self.trading_horizon,
+                                              STRATEGIES_BY_HORIZON["intraday"]))
+
+    def daily_deployment_cap(self) -> float:
+        """Dollars deployable per exchange day, derived from capital.
+
+        Returns 0.0 (no limit) when the multiple is 0 or no budget is set.
+        """
+        if self.daily_turnover_multiple <= 0 or self.budget <= 0:
+            return 0.0
+        return round(self.budget * self.daily_turnover_multiple, 2)
+
     def config_fingerprint(self) -> dict:
         """The settings that materially shape a trade, for grouping outcomes.
 
@@ -211,6 +301,10 @@ class Settings:
             "stop_loss_pct": self.stop_loss_pct,
             "trailing_stop_pct": self.trailing_stop_pct,
             "sizing": "atr" if self.use_atr_sizing else "flat",
+            # Changes WHICH symbols are candidates, so outcomes with and
+            # without it are not comparable and must not pool together.
+            "universe": (("leaders" if self.is_swing else "gappers")
+                         if self.use_premarket_watchlist else "turnover"),
             "risk_per_trade_pct": self.risk_per_trade_pct,
             "atr_stop_multiple": self.atr_stop_multiple,
         }
@@ -220,7 +314,8 @@ class Settings:
         `swing/fifo/gate5/+3.0-2.0/atr`."""
         f = self.config_fingerprint()
         return (f"{f['horizon']}/{f['strategy']}/gate{f['min_confirmations']}"
-                f"/+{f['lock_profit_pct']:g}-{f['stop_loss_pct']:g}/{f['sizing']}")
+                f"/+{f['lock_profit_pct']:g}-{f['stop_loss_pct']:g}/{f['sizing']}"
+                f"/{f['universe']}")
 
     def active_universe(self) -> list[str]:
         if self.universe:
@@ -292,6 +387,11 @@ class Quote:
     # Exchange trading status. "normal" = tradable; anything else (halted,
     # suspended, delisted) must never be bought into.
     trade_status: str = "normal"
+    # Pre-market session (US mainly; 0.0 when the market has none or it is
+    # outside pre-open). The gap is what a pre-market screen ranks on.
+    pre_market_price: float = 0.0
+    pre_market_change_pct: float = 0.0
+    pre_market_turnover: float = 0.0
 
 
 @dataclass

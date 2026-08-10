@@ -53,6 +53,7 @@ function render(data) {
   } = data;
 
   renderViability(viability);
+  renderPremarket(data.premarket);
 
   // AI Brain status
   const aiEl = el("aiStatus");
@@ -118,20 +119,106 @@ function render(data) {
   if (asEl) asEl.checked = settings.use_atr_sizing !== false;
 
   for (const [id, key, dflt] of [["maxConcurrentPositions","max_concurrent_positions",5],
-                                 ["dailyBudget","daily_budget",0],
+                                 ["dailyTurnover","daily_turnover_multiple",3],
                                  ["dailyLossLimit","daily_loss_limit",0],
                                  ["cooldownAfterLosses","cooldown_after_losses",3]]) {
     const node = el(id);
     if (node && document.activeElement !== node) node.value = settings[key] ?? dflt;
   }
 
-  const thEl = el("tradingHorizon");
-  if (thEl && document.activeElement !== thEl) thEl.value = settings.trading_horizon || "intraday";
-  // Duration and stop-at-end do nothing in swing mode — a session that never
-  // expires can never reach them. Showing them implies control that isn't there.
-  const swing = (settings.trading_horizon || "intraday") === "swing";
-  const durField = el("durationField");
+  const horizon = settings.trading_horizon || "intraday";
+  const swing = horizon === "swing";
+  document.querySelectorAll("#horizonSeg button").forEach(b =>
+    b.classList.toggle("active", b.dataset.value === horizon));
+  // Belt and braces: the generic .segmented sync below must never be able to
+  // clear this one, so re-assert it at the end of render too.
+  queueMicrotask(() => document.querySelectorAll("#horizonSeg button").forEach(b =>
+    b.classList.toggle("active", b.dataset.value === horizon)));
+
+  const hzHint = el("horizonHint");
+  if (hzHint) hzHint.textContent = swing
+    ? "Daily candles \u00b7 indicators measure days \u00b7 holds overnight \u00b7 session never expires"
+    : "1-minute candles \u00b7 indicators measure minutes \u00b7 flat by session end";
+
+  // Hourly pacing races a closing bell; swing has no bell. Hide it rather
+  // than leaving an inert control implying it does something.
+  const rateField = el("targetProfitPerHour")?.closest(".field");
+  if (rateField) rateField.style.display = swing ? "none" : "";
+  const targetLabel = document.querySelector('label[for="targetProfit"]');
+  if (targetLabel) targetLabel.textContent = swing ? "Profit target ($)" : "Session Target ($)";
+  const rateHint = el("targetProfitHint");
+  if (rateHint) rateHint.textContent = swing
+    ? "No session clock in swing, so there is no hourly pace to set \u2014 give an absolute profit target instead."
+    : "Set $/hour and it auto-calculates the session target. Or set Session Target directly and leave $/hour at 0.";
+
+  const durField = el("durationField"), holdField = el("maxHoldField");
   if (durField) durField.style.display = swing ? "none" : "";
+  if (holdField) holdField.style.display = swing ? "" : "none";
+
+  const durMins = el("duration_minutes"), durHours = el("duration_hours");
+  if (durMins) durMins.value = settings.duration_minutes ?? 390;
+  if (durHours && document.activeElement !== durHours)
+    durHours.value = String(Math.round((settings.duration_minutes ?? 390) / 6) / 10);
+  const holdEl = el("maxHoldDays");
+  if (holdEl && document.activeElement !== holdEl) holdEl.value = settings.max_hold_days ?? 0;
+
+  // Scanning wider does not mean trading wider: only the candle budget gets
+  // indicators, and the convergence gate treats missing indicators as not
+  // confirmed. Show that relationship instead of letting "Max Symbols" imply
+  // an opportunity it cannot deliver.
+  const cov = data.coverage;
+  const covHint = el("coverageHint");
+  if (covHint && cov) {
+    const tradable = Math.min(cov.scanned || 0, cov.candle_budget);
+    covHint.innerHTML = cov.gate > 0
+      ? `Scanning <strong>${cov.scanned}</strong> \u00b7 indicators for up to
+         <strong>${cov.candle_budget}</strong> \u00b7 only those
+         <strong>${tradable}</strong> can pass the ${cov.gate}-of-5 gate.
+         A wider scan picks better candidates from a bigger pool, but does not
+         raise this ceiling.`
+      : `Scanning <strong>${cov.scanned}</strong> \u00b7 indicators for up to
+         <strong>${cov.candle_budget}</strong>.`;
+  }
+
+  // Show the derived dollar figure so nobody has to divide capital by days.
+  const turnHint = el("turnoverHint");
+  if (turnHint) {
+    const mult = Number(settings.daily_turnover_multiple || 0);
+    const cap = mult > 0 ? Number(settings.budget || 0) * mult : 0;
+    turnHint.innerHTML = mult > 0
+      ? `Caps how much capital may be <em>deployed</em> per exchange day \u2014 counted
+         cumulatively, so buying, selling and buying again spends it twice.
+         <strong>${mult}\u00d7 your ${money(settings.budget || 0)} = ${money(cap)}/day.</strong>
+         This is a churn cap, not a capital cap: it limits how many times you
+         recycle the same money, which is where fees compound. Days roll over in
+         the exchange's own timezone and all limits survive a restart.`
+      : `Daily turnover cap is off \u2014 capital can be recycled without limit,
+         and each recycle pays another round trip of fees.`;
+  }
+
+  const pmToggle = el("usePremarketWatchlist");
+  if (pmToggle) pmToggle.checked = settings.use_premarket_watchlist !== false;
+  const seToggle = el("stopAtEnd");
+  if (seToggle) seToggle.checked = settings.stop_at_end !== false;
+  const evToggle = el("enforceViability");
+  if (evToggle) evToggle.checked = settings.enforce_trade_viability !== false;
+  // Swing sessions never expire, so nothing can ever reach "close at session end".
+  const seField = el("stopAtEndField");
+  if (seField) seField.style.display = swing ? "none" : "";
+
+  const scanHint = el("scanUnitHint");
+  if (scanHint) scanHint.textContent = swing ? "seconds (900 = 15 min)" : "seconds";
+
+  const strategySel = el("aiStrategy");
+  if (strategySel) {
+    const allowed = swing ? ["conservative", "swing", "aggressive"]
+                          : ["conservative", "fifo", "scalp", "aggressive"];
+    [...strategySel.options].forEach(o => {
+      o.hidden = !allowed.includes(o.value);
+      o.disabled = o.hidden;
+    });
+    if (!allowed.includes(strategySel.value)) strategySel.value = allowed[0];
+  }
 
   const mcEl = el("minConfirmations");
   if (mcEl && document.activeElement !== mcEl)
@@ -215,7 +302,11 @@ function render(data) {
   el("tick_interval_seconds").value = settings.tick_interval_seconds;
   el("allow_live_trading").checked  = settings.allow_live_trading;
 
-  document.querySelectorAll(".segmented").forEach(group => {
+  // Only groups with a data-name are driven by `selected`. The horizon control
+  // has none — it is synced from settings above — and without this guard the
+  // loop wrote `selected[undefined]`, deselecting BOTH of its buttons every
+  // render, including the first one after a refresh.
+  document.querySelectorAll(".segmented[data-name]").forEach(group => {
     const name = group.dataset.name;
     group.querySelectorAll("button").forEach(btn =>
       btn.classList.toggle("active", btn.dataset.value === selected[name]));
@@ -485,9 +576,24 @@ function renderViability(v) {
   }
 
   const rows = broken.map(([name, m]) => {
-    const fix = m.min_viable_notional > 0
-      ? `raise trade size to ~${money(m.min_viable_notional)}, or the target above ${m.breakeven_pct.toFixed(2)}%`
-      : `no trade size works — the target must exceed ${m.breakeven_pct.toFixed(2)}%`;
+    let fix;
+    if (!m.min_viable_notional) {
+      fix = `no trade size works \u2014 the target must exceed ${m.breakeven_pct.toFixed(2)}%`;
+    } else if (m.reachable === false) {
+      const b = v.sizing_basis || {};
+      const derivation = b.equity
+        ? ` (${money(b.equity)} \u00d7 ${Math.round((b.cash_fraction || 0) * 100)}%, because you allow`
+          + ` ${b.max_positions} concurrent positions)`
+        : "";
+      // The size that would work is more than a quarter of the account, which
+      // is the most any single position may take.
+      fix = `${money(m.min_viable_notional)}/trade would clear it, but you can only fund`
+          + ` ${money(m.affordable_notional)}${derivation} \u2014 so raise the target above`
+          + ` ${m.breakeven_pct.toFixed(2)}%, allow fewer positions, add capital,`
+          + ` or switch to Swing`;
+    } else {
+      fix = `raise trade size to ~${money(m.min_viable_notional)}, or the target above ${m.breakeven_pct.toFixed(2)}%`;
+    }
     return `<div><strong>${name}</strong>: costs ${m.breakeven_pct.toFixed(2)}% vs
       ${v.target_pct.toFixed(2)}% target → a <em>winning</em> trade nets
       ${m.net_edge_pct.toFixed(2)}%. <span class="viability-fix">Fix: ${fix}.</span></div>`;
@@ -595,6 +701,28 @@ function renderExitBreakdown(byReason) {
       <tbody>${body}</tbody>
     </table>
   </div>`;
+}
+
+// ─────────────────────────────────────────────
+// Pre-market watchlist
+// ─────────────────────────────────────────────
+function renderPremarket(pm) {
+  const card = el("premarketCard"); if (!card) return;
+  const list = pm?.watchlist || [];
+  if (!list.length) { card.style.display = "none"; return; }
+  card.style.display = "";
+  el("pmCount").textContent = list.length;
+  const kind = pm.kind === "leaders" ? "20-day leaders" : "pre-market gappers";
+  const head = card.querySelector("h2");
+  if (head) head.childNodes[0].nodeValue = pm.kind === "leaders" ? "Swing Watchlist " : "Pre-market Watchlist ";
+  el("pmBuilt").textContent = (pm.built_at
+    ? `${kind} \u00b7 built ${new Date(pm.built_at).toLocaleTimeString()}` : kind);
+  el("premarketBody").innerHTML = `<div class="pm-grid">` + list.map(g => `
+    <div class="pm-item">
+      <div class="pm-sym">${g.symbol}</div>
+      <div class="pm-gap ${g.gap_pct >= 0 ? "gain" : "loss"}">${g.gap_pct >= 0 ? "+" : ""}${g.gap_pct.toFixed(2)}%</div>
+      <div class="pm-vol">$${Number(g.turnover).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+    </div>`).join("") + `</div>`;
 }
 
 // ─────────────────────────────────────────────
@@ -771,7 +899,7 @@ function renderBacktest(result) {
 // ─────────────────────────────────────────────
 // Event wiring
 // ─────────────────────────────────────────────
-document.querySelectorAll(".segmented button").forEach(btn => {
+document.querySelectorAll(".segmented[data-name] button").forEach(btn => {
   btn.addEventListener("click", () => {
     const name = btn.closest(".segmented").dataset.name;
     selected[name] = btn.dataset.value;
@@ -779,26 +907,123 @@ document.querySelectorAll(".segmented button").forEach(btn => {
   });
 });
 
-el("settingsForm").addEventListener("submit", async e => {
-  e.preventDefault();
-  const form = new FormData(e.currentTarget);
-  const universe = String(form.get("universe")||"").split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(Boolean);
-  render(await api("/api/settings", { method: "POST", body: JSON.stringify({
-    markets: form.getAll("markets"), universe,
-    budget:               Number(form.get("budget")),
-    duration_minutes:     Number(form.get("duration_minutes")),
-    max_scan_symbols:     Number(form.get("max_scan_symbols")),
-    max_loss:             Number(form.get("max_loss")),
-    max_trade_value:      Number(form.get("max_trade_value")),
-    trading_mode:         selected.trading_mode,
-    approval_mode:        selected.approval_mode,
-    strategy_enabled:     state.settings?.strategy_enabled || false,
-    auto_tick_enabled:    true,   // always on — controlled by Start/End Session
-    tick_interval_seconds:Number(form.get("tick_interval_seconds")),
-    trading_horizon:      String(form.get("trading_horizon") || "intraday"),
-    allow_live_trading:   el("allow_live_trading").checked,
-  })}));
+el("duration_hours")?.addEventListener("input", () => {
+  const mins = Math.max(1, Math.round(parseFloat(el("duration_hours").value || "6.5") * 60));
+  el("duration_minutes").value = mins;
 });
+
+document.querySelectorAll("#horizonSeg button").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    // Posted alone: every other field on screen belongs to the OUTGOING
+    // horizon, and sending them would overwrite the incoming profile.
+    render(await api("/api/settings", { method: "POST",
+      body: JSON.stringify({ trading_horizon: btn.dataset.value }) }));
+  });
+});
+
+// ─────────────────────────────────────────────
+// Saving — ONE button, ALL settings
+// ─────────────────────────────────────────────
+// Previously two buttons owned disjoint halves of the sidebar: 14 inputs lived
+// outside the form, so typing a stop loss and pressing "Save Settings" never
+// sent it — the server echoed its old value and render() overwrote the box,
+// which looked exactly like the field resetting itself.
+function collectSettings() {
+  const form = new FormData(el("settingsForm"));
+  const num = (id, dflt = 0) => {
+    const v = parseFloat(el(id)?.value);
+    return Number.isFinite(v) ? v : dflt;
+  };
+  const universe = String(form.get("universe") || "")
+    .split(/[\s,]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
+  return {
+    // ② Capital & universe
+    markets: form.getAll("markets"), universe,
+    budget:                Number(form.get("budget")),
+    max_loss:              Number(form.get("max_loss")),
+    max_trade_value:       Number(form.get("max_trade_value")),
+    max_scan_symbols:      Number(form.get("max_scan_symbols")),
+    duration_minutes:      Number(form.get("duration_minutes")),
+    tick_interval_seconds: Number(form.get("tick_interval_seconds")),
+    max_hold_days:         num("maxHoldDays"),
+    use_premarket_watchlist: el("usePremarketWatchlist").checked,
+    stop_at_end:             el("stopAtEnd").checked,
+    enforce_trade_viability: el("enforceViability").checked,
+    trading_mode:          selected.trading_mode,
+    approval_mode:         selected.approval_mode,
+    allow_live_trading:    el("allow_live_trading").checked,
+    strategy_enabled:      state.settings?.strategy_enabled || false,
+    auto_tick_enabled:     true,
+    // ③ Strategy & risk
+    target_profit:          num("targetProfit"),
+    target_profit_per_hour: num("targetProfitPerHour"),
+    lock_profit_pct:        num("lockProfitPct"),
+    stop_loss_pct:          num("stopLossPct"),
+    trailing_stop_pct:      num("trailingStopPct"),
+    min_confirmations:      Math.round(num("minConfirmations")),
+    risk_per_trade_pct:     num("riskPerTradePct", 0.1),
+    atr_stop_multiple:      num("atrStopMultiple", 2),
+    use_atr_sizing:         el("useAtrSizing").checked,
+    max_concurrent_positions: Math.round(num("maxConcurrentPositions")),
+    daily_turnover_multiple: num("dailyTurnover", 3),
+    daily_loss_limit:       num("dailyLossLimit"),
+    cooldown_after_losses:  Math.round(num("cooldownAfterLosses")),
+    ai_strategy_name:       el("aiStrategy").value,
+  };
+}
+
+async function saveAllSettings() {
+  const statusEl = el("aiConfigStatus");
+  const btn = el("saveAllBtn");
+  btn.disabled = true;
+  statusEl.style.color = "var(--muted)";
+  statusEl.textContent = "Saving…";
+  try {
+    render(await api("/api/settings", {
+      method: "POST", body: JSON.stringify(collectSettings()) }));
+    // Provider/model hot-swap is a separate endpoint, but it is still part of
+    // "save" from the user's point of view — so it happens on the same click.
+    const s = await api("/api/ai/config", { method: "POST", body: JSON.stringify({
+      provider: el("aiProvider").value,
+      model: el("aiModel").value.trim(),
+      strategy: el("aiStrategy").value,
+    })});
+    statusEl.style.color = "var(--green)";
+    statusEl.textContent = s.ai?.error
+      ? `Saved \u2014 but AI: ${s.ai.error}`
+      : `\u2713 Saved all settings \u00b7 ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    statusEl.style.color = "var(--red)";
+    statusEl.textContent = "Save failed: " + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+el("saveAllBtn").addEventListener("click", saveAllSettings);
+
+el("useDefaultsBtn").addEventListener("click", async () => {
+  const horizon = state.settings?.trading_horizon || "intraday";
+  if (!confirm(`Apply the recommended ${horizon} settings?\n\n`
+    + "Changes targets, stops, sizing, scan pool and risk limits.\n"
+    + "Your budget, markets and trading mode are left alone.")) return;
+  const statusEl = el("aiConfigStatus");
+  try {
+    const r = await api("/api/settings/defaults", { method: "POST", body: "{}" });
+    render(r);
+    const changed = Object.entries(r.defaults_applied || {});
+    statusEl.style.color = "var(--green)";
+    statusEl.textContent = changed.length
+      ? `\u2713 Updated ${changed.length} setting(s): `
+        + changed.slice(0, 4).map(([k, v]) => `${k} ${v.from}\u2192${v.to}`).join(", ")
+        + (changed.length > 4 ? "\u2026" : "")
+      : "\u2713 Already on the recommended settings";
+  } catch (err) {
+    statusEl.style.color = "var(--red)";
+    statusEl.textContent = "Failed: " + err.message;
+  }
+});
+el("settingsForm").addEventListener("submit", e => { e.preventDefault(); saveAllSettings(); });
 
 el("startSessionBtn").addEventListener("click", async () => {
   render(await api("/api/settings", { method: "POST", body: JSON.stringify({
@@ -889,64 +1114,6 @@ el("aiProvider").addEventListener("change", () => {
   el("aiModel").value = "";
 });
 
-el("saveAiBtn").addEventListener("click", async () => {
-  const provider = el("aiProvider").value;
-  const model    = el("aiModel").value.trim();
-  const strategy = el("aiStrategy").value;
-  const target   = parseFloat(el("targetProfit").value || "0");
-  const targetPerHour = parseFloat(el("targetProfitPerHour").value || "0");
-  const lockPct  = parseFloat(el("lockProfitPct").value || "0");
-  const stopPct  = parseFloat(el("stopLossPct").value || "0");
-  const trailPct = parseFloat(el("trailingStopPct").value || "0");
-  const minConf  = parseInt(el("minConfirmations").value || "0", 10);
-  const riskPct  = parseFloat(el("riskPerTradePct").value || "0.5");
-  const atrMult  = parseFloat(el("atrStopMultiple").value || "2");
-  const atrSize  = el("useAtrSizing").checked;
-  const maxPos   = parseInt(el("maxConcurrentPositions").value || "0", 10);
-  const dailyBud = parseFloat(el("dailyBudget").value || "0");
-  const dailyLos = parseFloat(el("dailyLossLimit").value || "0");
-  const coolN    = parseInt(el("cooldownAfterLosses").value || "0", 10);
-  const statusEl = el("aiConfigStatus");
-  statusEl.style.color = "var(--muted)";
-  statusEl.textContent = "Applying…";
-  try {
-    // Save target_profit + target_profit_per_hour + lock_profit_pct + ai_strategy_name
-    await api("/api/settings", { method: "POST", body: JSON.stringify({
-      ...state.settings,
-      target_profit: target,
-      target_profit_per_hour: targetPerHour,
-      lock_profit_pct: lockPct,
-      stop_loss_pct: stopPct,
-      trailing_stop_pct: trailPct,
-      min_confirmations: minConf,
-      risk_per_trade_pct: riskPct,
-      atr_stop_multiple: atrMult,
-      use_atr_sizing: atrSize,
-      max_concurrent_positions: maxPos,
-      daily_budget: dailyBud,
-      daily_loss_limit: dailyLos,
-      cooldown_after_losses: coolN,
-      ai_strategy_name: strategy,
-    })});
-    // Then hot-swap the AI provider/model/strategy
-    const data = await api("/api/ai/config", { method: "POST",
-      body: JSON.stringify({ provider, model, strategy }) });
-    const s = data.ai;
-    if (s.error) {
-      statusEl.style.color = "var(--red)";
-      statusEl.textContent = "⚠ " + s.error;
-    } else if (s.connected) {
-      statusEl.style.color = "var(--green)";
-      statusEl.textContent = `✓ ${s.provider} · ${s.model || "default"} · strategy: ${s.strategy}`;
-    } else {
-      statusEl.style.color = "var(--muted)";
-      statusEl.textContent = s.provider !== "none" ? `Add ${s.provider.toUpperCase()}_API_KEY to .env` : "Momentum rules only";
-    }
-  } catch (err) {
-    statusEl.style.color = "var(--red)";
-    statusEl.textContent = "Error: " + err.message;
-  }
-});
 
 
 // ─────────────────────────────────────────────
