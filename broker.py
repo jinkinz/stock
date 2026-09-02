@@ -627,6 +627,40 @@ class LongbridgeBroker:
         self._lot_sizes[symbol] = lot
         return lot
 
+    def cash_max_quantity(self, symbol: str, price: float) -> float | None:
+        """Largest quantity of `symbol` buyable at `price` out of SETTLED CASH,
+        per the broker's own estimate. Returns None when the figure cannot be
+        obtained — callers must read that as "unproven", never as "fine".
+
+        This is the ONLY reading that separates cash from financing.
+        `account_balance().available_cash` does not: on a financing-enabled
+        account it already includes the loan, so an order can clear a balance
+        check and still settle on borrowed money.
+
+        Deliberately reads `cash_max_qty` and never `margin_max_qty`. The
+        response carries both, and the difference between them IS the debt.
+
+        Costs one trade-context call per check (TradingRateLimiter, 30/30s).
+        Not cached on purpose: the number moves with every fill, and acting on
+        a stale cash bound is the exact failure this exists to prevent.
+        """
+        try:
+            estimate = self.trade_ctx.estimate_max_purchase_quantity(
+                symbol=symbol,
+                order_type=self.OrderType.LO,
+                side=self.OrderSide.Buy,
+                price=self.Decimal(str(price)),
+            )
+        except Exception:
+            return None
+        raw = getattr(estimate, "cash_max_qty", None)
+        if raw is None:
+            return None
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            return None
+
     # Fill confirmation: poll this many times, this far apart, before giving
     # up and reporting the order as "accepted but not confirmed filled".
     FILL_POLLS = 3

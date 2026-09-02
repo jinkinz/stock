@@ -127,6 +127,32 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
   3. **Currency.** Live orders are limited to `LIVE_ENFORCED_CURRENCIES`
      (USD, SGD) — currencies whose balance `cash_by_currency()` can actually
      read. Adding one means adding real balance handling, not just a string.
+  4. **Cash cover — never margin** (`_cash_cover_denial()`). The account has
+     financing enabled, and funding source is an ACCOUNT-level property: no
+     order field can request cash-only, so nothing in `submit_order` can
+     express it. Worse, the balance check cannot see it either —
+     `available_cash` on a financing-enabled account ALREADY INCLUDES the loan,
+     which is why `cash_by_currency()` says in its own docstring that it is not
+     proof of cash cover. The only reading that separates the two is
+     `LongbridgeBroker.cash_max_quantity()` →
+     `estimate_max_purchase_quantity(...).cash_max_qty`. Never `margin_max_qty`:
+     the response carries both and the difference between them IS the debt.
+     Buys are trimmed to the cash limit and refused when it is 0.
+     **FAILS CLOSED** — an order whose cash cover cannot be read is not sent,
+     because a missed buy costs nothing and a margin-funded one is leverage the
+     user never chose. Costs one trade-context call per live buy and is
+     deliberately NOT cached (a stale cash bound is the exact failure it
+     prevents). The concrete case: S$2,113 cash, one lot of DBS is S$4,500 —
+     `cash_max_qty` 0, `margin_max_qty` 100, and without this the fill lands in
+     the ledger as an ordinary cash buy. In-flight buys are subtracted from the
+     bound PER CURRENCY (`_live_pending_by_currency`): the broker's estimate is
+     a snapshot that cannot see this tick's own orders, so without it two buys
+     each clear the same cash and together exceed it. The budget ceiling may
+     pool currencies at face value; the cash bound must not, or SGD spending
+     would block USD orders. This is the belt; the braces are
+     getting financing disabled on the account itself (+65 6321 8888), which is
+     still outstanding. Note the guard in `execute()` that reads "no margin" is
+     a check on order SIDE only and never was anything more.
   Budget notionals are counted at face value per currency (conservative while
   SGD < USD). PAPER mode is exempt by design: its starting cash already is the
   budget, and adding a second ceiling would invalidate baselines measured

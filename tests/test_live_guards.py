@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import app  # noqa: E402
+from market_hours import currency_of  # noqa: E402
 from models import (  # noqa: E402
     ApprovalMode, OrderProposal, OrderStatus, Portfolio, Position, Settings, Side, TradingMode,
 )
@@ -37,10 +38,15 @@ class FakeLiveBroker:
     """Stands in for LongbridgeBroker. Records what it was asked to submit so a
     test can prove a blocked order never reached the exchange."""
 
-    def __init__(self, positions=None, cash=None):
+    def __init__(self, positions=None, cash=None, cash_max=None):
         self._portfolio = Portfolio(cash=(cash or {}).get("USD", 0.0),
                                     positions=positions or {})
         self._cash = cash or {}
+        # symbol -> settled-cash quantity limit, or None to derive it from the
+        # cash balance (i.e. model a plain cash account). Pass an explicit
+        # value to model a FINANCING-enabled account, where the broker will
+        # happily fill more than cash covers.
+        self._cash_max = cash_max
         self.submitted: list[OrderProposal] = []
 
     def portfolio(self) -> Portfolio:
@@ -48,6 +54,13 @@ class FakeLiveBroker:
 
     def cash_by_currency(self) -> dict:
         return dict(self._cash)
+
+    def cash_max_quantity(self, symbol: str, price: float):
+        if self._cash_max is not None:
+            return self._cash_max.get(symbol)
+        if price <= 0:
+            return None
+        return float(int(self._cash.get(currency_of(symbol), 0.0) / price))
 
     def submit_order(self, proposal: OrderProposal) -> OrderProposal:
         self.submitted.append(proposal)
@@ -69,7 +82,8 @@ def foreign_position(symbol: str, qty: float, cost: float) -> Position:
 class LiveGuardTestCase(unittest.TestCase):
     def setUp(self):
         self._saved = (app.STATE.settings, app.STATE.live_broker,
-                       app.TradingEngine._live_pending_notional)
+                       app.TradingEngine._live_pending_notional,
+                       app.TradingEngine._live_pending_by_currency)
         app.STATE.settings = Settings(
             budget=1000.0, max_trade_value=500.0, trading_mode=TradingMode.LIVE,
             approval_mode=ApprovalMode.AUTO, allow_live_trading=True,
@@ -80,12 +94,14 @@ class LiveGuardTestCase(unittest.TestCase):
             enforce_trade_viability=False,
         ).normalized()
         app.TradingEngine._live_pending_notional = 0.0
+        app.TradingEngine._live_pending_by_currency = {}
         app.TradingEngine._live_sync_at = 0.0
         self.engine = app.TradingEngine()
 
     def tearDown(self):
         (app.STATE.settings, app.STATE.live_broker,
-         app.TradingEngine._live_pending_notional) = self._saved
+         app.TradingEngine._live_pending_notional,
+         app.TradingEngine._live_pending_by_currency) = self._saved
 
     def use_broker(self, **kwargs) -> FakeLiveBroker:
         broker = FakeLiveBroker(**kwargs)
@@ -234,7 +250,7 @@ class CashCoverTest(LiveGuardTestCase):
         self.use_broker(cash={"USD": 50.0})
         denial = self.engine._live_guard(self.buy(qty=1, price=100.0))
         self.assertIsNotNone(denial)
-        self.assertIn("No borrowing", denial)
+        self.assertIn("balance is only", denial)
 
     def test_sgd_order_checks_sgd_not_usd(self):
         # Plenty of USD, no SGD: an SG order must still be refused.
@@ -242,6 +258,101 @@ class CashCoverTest(LiveGuardTestCase):
         denial = self.engine._live_guard(self.buy(symbol="D05.SG", qty=1, price=30.0))
         self.assertIsNotNone(denial)
         self.assertIn("SGD", denial)
+
+
+class MarginTest(LiveGuardTestCase):
+    """The tool must never fill on borrowed money.
+
+    Funding source is an ACCOUNT-level property — no order field can request
+    cash-only — so the balance check cannot see it: on a financing-enabled
+    account `available_cash` already includes the loan. The broker's cash-vs-
+    margin estimate is the only place the two separate, and these tests pin
+    that it is read, that it fails closed, and that `margin_max_qty` is never
+    what gets used.
+    """
+
+    def test_symbol_reachable_only_on_margin_is_blocked(self):
+        # The real probe result: with S$2,113 cash, one lot of DBS is S$4,500.
+        # cash_max_qty 0, margin_max_qty 100. The balance check waves it
+        # through on buying power; only the cash bound catches it.
+        self.use_broker(cash={"SGD": 9_000.0}, cash_max={"D05.SG": 0.0})
+        denial = self.engine._live_guard(self.buy(symbol="D05.SG", qty=100, price=45.0))
+        self.assertIsNotNone(denial)
+        self.assertIn("only on margin", denial)
+
+    def test_quantity_is_trimmed_to_settled_cash_not_buying_power(self):
+        self.use_broker(cash={"SGD": 9_000.0}, cash_max={"O39.SG": 100.0})
+        proposal = self.buy(symbol="O39.SG", qty=200, price=4.0)
+        self.assertIsNone(self.engine._live_guard(proposal))
+        self.assertEqual(proposal.quantity, 100.0)
+        self.assertIn("no financing", proposal.reason)
+
+    def test_unreadable_cash_limit_fails_closed(self):
+        # A missed buy costs nothing; a margin-funded one is a debt the user
+        # never agreed to. Absence of an answer is never treated as a yes.
+        self.use_broker(cash={"USD": 100_000.0}, cash_max={})
+        denial = self.engine._live_guard(self.buy(qty=1, price=100.0))
+        self.assertIsNotNone(denial)
+        self.assertIn("could not read", denial)
+
+    def test_broker_without_the_capability_fails_closed(self):
+        class NoEstimateBroker(FakeLiveBroker):
+            cash_max_quantity = None
+
+        broker = NoEstimateBroker(cash={"USD": 100_000.0})
+        app.STATE.live_broker = broker
+        denial = self.engine._live_guard(self.buy(qty=1, price=100.0))
+        self.assertIsNotNone(denial)
+        self.assertIn("cannot report a settled-cash buying limit", denial)
+
+    def test_a_blocked_margin_order_never_reaches_the_exchange(self):
+        broker = self.use_broker(cash={"SGD": 9_000.0}, cash_max={"D05.SG": 0.0})
+        proposal = self.buy(symbol="D05.SG", qty=100, price=45.0)
+        self.engine.execute(proposal)
+        self.assertIs(proposal.status, OrderStatus.FAILED)
+        self.assertEqual(broker.submitted, [])
+
+    def test_several_buys_in_one_tick_cannot_collectively_exceed_cash(self):
+        # The broker's estimate is a snapshot and cannot see orders already
+        # sent this tick. Each buy fits the cash bound alone; together they
+        # must not, or the guard is decorative.
+        app.STATE.settings.budget = 10_000.0
+        self.use_broker(cash={"USD": 500.0},
+                        cash_max={s: 5.0 for s in ("AAPL.US", "NVDA.US", "MSFT.US")})
+        total = 0.0
+        for symbol in ("AAPL.US", "NVDA.US", "MSFT.US"):
+            proposal = self.buy(symbol=symbol, qty=5, price=100.0)
+            self.engine.execute(proposal)
+            if proposal.status is not OrderStatus.FAILED:
+                total += proposal.quantity * proposal.price
+        self.assertLessEqual(total, 500.0, f"committed {total} against 500 of cash")
+        self.assertGreater(total, 0.0, "the guard must not block everything")
+
+    def test_pending_cash_is_tracked_per_currency(self):
+        # A USD order already sent must not shrink what SGD cash can cover.
+        app.STATE.settings.budget = 10_000.0
+        self.use_broker(cash={"USD": 500.0, "SGD": 500.0},
+                        cash_max={"AAPL.US": 5.0, "O39.SG": 100.0})
+        self.engine.execute(self.buy(symbol="AAPL.US", qty=5, price=100.0))
+        proposal = self.buy(symbol="O39.SG", qty=100, price=4.0)
+        self.assertIsNone(self.engine._live_guard(proposal))
+        self.assertEqual(proposal.quantity, 100.0)
+
+    def test_sells_are_never_blocked_on_cash_cover(self):
+        # Trapping a position is worse than any funding concern, and selling
+        # raises cash rather than spending it.
+        self.use_broker(positions={"D05.SG": tool_position("D05.SG", 100, 45.0)},
+                        cash={"SGD": 0.0}, cash_max={"D05.SG": 0.0})
+        self.assertIsNone(self.engine._live_guard(self.sell(symbol="D05.SG", qty=100, price=45.0)))
+
+    def test_paper_mode_never_consults_the_cash_limit(self):
+        # PaperBroker has no such method; if paper reached this guard it would
+        # fail closed and paper trading would stop dead.
+        app.STATE.settings.trading_mode = TradingMode.PAPER
+        proposal = self.buy(qty=1, price=100.0)
+        app.STATE.paper_broker.portfolio().cash = 10_000.0
+        self.engine.execute(proposal)
+        self.assertIsNot(proposal.status, OrderStatus.FAILED)
 
 
 class PaperModeUnaffectedTest(LiveGuardTestCase):

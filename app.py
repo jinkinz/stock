@@ -735,6 +735,7 @@ class TradingEngine:
             # last tick's in-flight reservations are either reflected there now
             # or were never filled.
             TradingEngine._live_pending_notional = 0.0
+            TradingEngine._live_pending_by_currency = {}
             TradingEngine._live_sync_at = 0.0
             # Market-hours gate — only with real data. Sim prices move 24/7,
             # so the simulator stays testable at any hour.
@@ -1014,6 +1015,11 @@ class TradingEngine:
     # exchange positions. Without it, several buys in one tick each see the
     # same "deployed" figure and can collectively overshoot the budget.
     _live_pending_notional: float = 0.0
+    # The same reservation, split by settlement currency. The budget ceiling
+    # can pool currencies (it counts face value, which is conservative); the
+    # CASH bound cannot — SGD already spent this tick does not reduce what USD
+    # cash can cover, and pooling them would block valid orders.
+    _live_pending_by_currency: dict = {}
 
     def _live_portfolio(self):
         """Exchange-synced portfolio, re-fetched at most every few seconds."""
@@ -1203,20 +1209,91 @@ class TradingEngine:
             notional = fitted * proposal.price
             proposal.reason += f" [trimmed to ${notional:,.2f} to stay inside the budget]"
 
-        # Second, independent bound: real balance in the order's own currency.
+        # Second bound: reported balance in the order's own currency. Cheap,
+        # and it catches the obvious case — but it is NOT proof of cash cover.
+        # On a financing-enabled account `available_cash` already includes the
+        # loan (see LongbridgeBroker.cash_by_currency), so this bound can pass
+        # an order that settles on margin. It used to claim "No borrowing",
+        # which was the strongest sentence in the file and the least true.
         broker = STATE.broker()
         available = 0.0
         if hasattr(broker, "cash_by_currency"):
             available = broker.cash_by_currency().get(currency, 0.0)
         if notional > available:
-            return (f"BLOCKED: order needs {currency} {notional:,.2f} but only "
-                    f"{currency} {available:,.2f} is available. No borrowing.")
+            return (f"BLOCKED: order needs {currency} {notional:,.2f} but the reported "
+                    f"{currency} balance is only {currency} {available:,.2f}.")
+
+        # Third bound, and the only one that actually separates cash from credit.
+        return self._cash_cover_denial(proposal)
+
+    def _cash_cover_denial(self, proposal: OrderProposal) -> str | None:
+        """Refuse — or shrink — a live BUY that settled cash cannot cover.
+
+        This account has financing enabled (`max_finance_amount` > 0), so the
+        exchange will fill an order the cash balance cannot pay for and the
+        tool would record it as an ordinary cash buy. Nothing in the order API
+        can ask for cash-only: funding source is an ACCOUNT-level property, not
+        an order flag. The broker's own cash-vs-margin estimate is the single
+        place the two are distinguishable, so it is read here, at the one
+        chokepoint every order crosses.
+
+        Concretely, the case this exists for: with S$2,113 cash a lot of DBS is
+        S$4,500 — `cash_max_qty` 0, `margin_max_qty` 100. Without this check
+        the tool proposes it, Longbridge funds it, and the debt appears nowhere
+        in the ledger.
+
+        FAILS CLOSED. An order whose cash cover cannot be established is not
+        sent. A missed buy costs nothing; a margin-funded one is leverage the
+        user never chose, on a tool whose whole premise is that it does not use
+        any. This is also the belt to the account-level braces — the real fix
+        is to have financing disabled on the account itself.
+        """
+        broker = STATE.broker()
+        probe = getattr(broker, "cash_max_quantity", None)
+        if probe is None:
+            return ("BLOCKED: this broker cannot report a settled-cash buying limit, so "
+                    "the order cannot be proven cash-funded. Live buys are refused "
+                    "rather than risk settling on margin.")
+        cash_qty = probe(proposal.symbol, proposal.price)
+        if cash_qty is None:
+            return (f"BLOCKED: could not read the settled-cash limit for {proposal.symbol}. "
+                    "Refusing rather than risk a margin-funded fill — it will be retried "
+                    "on the next tick.")
+        if cash_qty <= 0:
+            return (f"BLOCKED: settled cash does not cover any {proposal.symbol} at "
+                    f"{proposal.price:,.2f} — the broker reports a cash limit of 0, so this "
+                    "symbol is reachable only on margin. This tool never borrows.")
+        # The broker's estimate is a snapshot: it cannot see orders this tick
+        # already sent but not yet settled. Without this subtraction two buys in
+        # one tick each clear the same cash bound independently and together
+        # exceed it — the identical failure `_live_pending_notional` exists to
+        # prevent on the budget side, and it would defeat the whole guard.
+        pending = self._live_pending_by_currency.get(currency_of(proposal.symbol), 0.0)
+        if pending > 0:
+            cash_qty = max(0.0, cash_qty - pending / proposal.price)
+            if cash_qty < 1.0:
+                return (f"BLOCKED: settled cash for {proposal.symbol} is already committed "
+                        "to orders sent earlier this tick. No borrowing to cover the rest.")
+
+        if proposal.quantity > cash_qty + 1e-9:
+            # Round DOWN to whole shares. submit_order floors again to a board-lot
+            # multiple, which can only reduce further — never back above the bound.
+            proposal.quantity = float(int(cash_qty))
+            if proposal.quantity <= 0:
+                return (f"BLOCKED: settled cash covers less than one share of "
+                        f"{proposal.symbol} at {proposal.price:,.2f}.")
+            proposal.reason += (f" [trimmed to {proposal.quantity:g} shares — the most "
+                                "settled cash covers, no financing]")
         return None
 
     def execute(self, proposal: OrderProposal) -> None:
-        # Hard guard: never trade options or on margin.
-        # We only allow plain BUY (cash) or SELL (held position).
-        # This cannot be overridden by settings.
+        # Instrument guard: plain BUY or SELL only — no options, no shorting.
+        # This is a check on the order SIDE and nothing more. It does NOT
+        # prevent a margin-funded fill; funding source is an account-level
+        # property that no order field can express. That is enforced separately
+        # in _cash_cover_denial(), reached via _live_guard() below. The comment
+        # here used to claim "never on margin", which read as a guarantee and
+        # hid the absence of one for as long as it stood.
         if proposal.side not in (Side.BUY, Side.SELL):
             proposal.status = OrderStatus.FAILED
             proposal.error = "Rejected: only plain BUY/SELL of owned shares is permitted. No margin, no options."
@@ -1285,7 +1362,12 @@ class TradingEngine:
         if (STATE.settings.trading_mode is TradingMode.LIVE
                 and proposal.side is Side.BUY
                 and proposal.status in (OrderStatus.FILLED, OrderStatus.APPROVED)):
-            TradingEngine._live_pending_notional += proposal.quantity * proposal.price
+            notional = proposal.quantity * proposal.price
+            TradingEngine._live_pending_notional += notional
+            spent = dict(TradingEngine._live_pending_by_currency)
+            paid_in = currency_of(proposal.symbol)
+            spent[paid_in] = spent.get(paid_in, 0.0) + notional
+            TradingEngine._live_pending_by_currency = spent
 
         if proposal.status is OrderStatus.FILLED:
             if proposal.side is Side.BUY:
