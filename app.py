@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue as _queue
 import threading
 import time
@@ -37,6 +38,11 @@ ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 STATE_DIR = ROOT / "state"
 STATE_FILE = STATE_DIR / "paper_state.json"
+# SG market data comes from Tiger, not Longbridge (no SG entitlement).
+# Mirrors LB_STATUS/AI_STATUS so the startup banner can say plainly whether
+# SG is readable — a silently-absent market looks identical to a quiet one.
+SG_STATUS: dict = {"enabled": False, "error": None, "symbols": []}
+
 TRADE_LOG = STATE_DIR / "trade_log.jsonl"
 # One line per completed round trip (entry fill(s) → exit fill(s)), unlike
 # TRADE_LOG which records individual fills. This is what /api/metrics reads.
@@ -97,6 +103,10 @@ class AppState:
         self._symbol_cache: list[str] = []
         self._symbol_cache_markets: list[str] = []
         self._symbol_cache_at: float = 0.0
+        # Per-market data routing, rebuilt when the execution broker
+        # changes (paper <-> live) so the router never serves a stale one.
+        self._router = None
+        self._router_default = None
         self.lock = threading.RLock()
         self.load()
 
@@ -106,6 +116,47 @@ class AppState:
                 self.live_broker = LongbridgeBroker()
             return self.live_broker
         return self.paper_broker
+
+    def data(self):
+        """Market DATA view — the same surface as a broker's data side
+        (`quote`, `quotes`, `candles`, `discover_symbols`), routed per market.
+
+        Split from broker() because the two answer different questions:
+        broker() is who fills an order, data() is who can see a price. They are
+        the same object for US and HK, and deliberately not for SG, where
+        Longbridge has no entitlement (quotes come back empty, candles raise
+        301604) but still accepts orders. Execution must never follow the data
+        routing: SG fills stay with Longbridge, whose SG fee schedule is
+        verified against real contract notes.
+
+        Falls back to the plain broker whenever SG routing is unavailable, so
+        a missing tigeropen install or absent credentials costs SG data and
+        nothing else.
+        """
+        broker = self.broker()
+        if self._router is not None and self._router_default is broker:
+            return self._router
+        overrides = {}
+        try:
+            from market_data import MarketDataRouter
+            from tiger_source import TigerSource
+
+            if os.environ.get("TIGER_ID") and os.environ.get("TIGER_PRIVATE_KEY"):
+                overrides["SG"] = TigerSource()
+        except Exception as exc:
+            SG_STATUS["enabled"] = False
+            SG_STATUS["error"] = str(exc)
+            return broker
+        if not overrides:
+            SG_STATUS["enabled"] = False
+            SG_STATUS["error"] = "TIGER_ID / TIGER_PRIVATE_KEY not set in .env"
+            return broker
+        self._router = MarketDataRouter(broker, overrides)
+        self._router_default = broker
+        SG_STATUS["enabled"] = True
+        SG_STATUS["error"] = None
+        SG_STATUS["symbols"] = list(overrides["SG"].symbols)
+        return self._router
 
     def load(self) -> None:
         if not STATE_FILE.exists():
@@ -731,6 +782,10 @@ class TradingEngine:
         from broker import LB_STATUS
         with STATE.lock:
             broker = STATE.broker()
+            # Prices and candles are routed per market (SG -> Tiger); fills
+            # are not. Keep the two names apart so a future edit cannot
+            # quietly send an SG order to whoever supplied its price.
+            data = STATE.data()
             # Fresh tick: the exchange positions are about to be re-synced, so
             # last tick's in-flight reservations are either reflected there now
             # or were never filled.
@@ -750,7 +805,7 @@ class TradingEngine:
                 # Markets are shut, so no trading — but this is exactly when a
                 # pre-market screen is useful: think while it is closed, act
                 # mechanically once it opens.
-                built = self._build_watchlist(broker)
+                built = self._build_watchlist(data)
                 STATE.universe_source = built or "all selected markets closed — waiting for open"
                 self._expire_stale_proposals()
                 if STATE.settings.strategy_enabled and self._session_expired():
@@ -760,12 +815,12 @@ class TradingEngine:
                 STATE.save()
                 return self.status()
 
-            symbols = self._resolve_universe(broker)
+            symbols = self._resolve_universe(data)
             if gate:
                 closed = {m for m in STATE.settings.markets if m not in open_mkts}
                 if closed:
                     symbols = [s for s in symbols if market_of(s) not in closed]
-            quotes = broker.quotes(symbols)
+            quotes = data.quotes(symbols)
             STATE.last_quotes = quotes
             STATE.last_quote = quotes[0] if quotes else None
             STATE.last_tick_at = datetime.now(timezone.utc).isoformat()
@@ -781,7 +836,7 @@ class TradingEngine:
                     self._close_positions_at_end(quotes)
             # Feed real 1-min candles for held positions + top candidates so
             # the strategy can use VWAP / EMA / RSI (no-op in pure sim mode)
-            self._enrich_with_candles(broker, quotes)
+            self._enrich_with_candles(data, quotes)
 
             if STATE.settings.strategy_enabled:
                 # ── Mechanical exits (profit lock / stop loss / trailing) ─────
@@ -1843,13 +1898,20 @@ class TradingEngine:
             "gate": STATE.settings.min_confirmations,
         }
 
-    def _enrich_with_candles(self, broker, quotes) -> None:
+    def _enrich_with_candles(self, data, quotes) -> None:
         """Fetch 1-min candles for held positions + the biggest day movers and
         feed them to the strategy for VWAP/EMA/RSI. Silent no-op when the
-        broker has no candle data (sim mode)."""
-        if not hasattr(broker, "candles"):
+        source has no candle data (sim mode).
+
+        Takes the DATA router, not the broker: candles for SG come from Tiger.
+        The position list still comes from the broker — the router is a data
+        surface and deliberately has no `portfolio()`, because a thing that
+        answers both "what is the price" and "what do I own" is exactly the
+        confusion this split exists to prevent.
+        """
+        if not hasattr(data, "candles"):
             return
-        portfolio = broker.portfolio()
+        portfolio = STATE.broker().portfolio()
         held = [s for s, p in portfolio.positions.items() if p.quantity > 0]
         movers = sorted(
             (q for q in quotes if q.prev_close > 0),
@@ -1884,7 +1946,7 @@ class TradingEngine:
             # any other.
             self._candle_fetched_at[symbol] = now
             try:
-                candles = broker.candles(symbol, period=period, count=count)
+                candles = data.candles(symbol, period=period, count=count)
             except Exception:
                 continue
             if candles and hasattr(STATE.strategy, "ingest_candles"):
@@ -2243,7 +2305,7 @@ def quote_refresh_loop() -> None:
                     symbols = [s for s in symbols if market_of(s) in open_mkts or market_of(s) not in ("US", "HK", "SG")]
                     if not symbols:
                         continue
-                fresh = {q.symbol: q for q in broker.quotes(symbols)}
+                fresh = {q.symbol: q for q in STATE.data().quotes(symbols)}
                 quotes = [fresh.get(q.symbol, q) for q in STATE.last_quotes]
                 STATE.last_quotes = quotes
                 STATE.last_quote = quotes[0] if quotes else None

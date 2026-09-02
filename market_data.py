@@ -1,7 +1,9 @@
 """Per-market routing of quotes and candles.
 
-NOT WIRED IN. This is the seam, built and reasoned; no source sits behind it
-yet (see the Tiger findings below). Nothing imports this module.
+WIRED IN via `AppState.data()`, with `tiger_source.TigerSource` behind the SG
+override. `data()` is deliberately separate from `broker()`: the router answers
+"who can see a price", the broker answers "who fills the order". SG reads go to
+Tiger; SG fills stay with Longbridge.
 
 WHY THIS EXISTS
 ---------------
@@ -24,11 +26,11 @@ every SG symbol tested). Keeping the two apart also protects `fees.SG_SCHEDULE`,
 which is `verified=True` against real LONGBRIDGE contract notes and would be
 silently wrong for anyone else's fills.
 
-MEASURED 2026-09-03 — TIGER IS NOT (YET) THAT VENDOR
-----------------------------------------------------
-Tiger Brokers SG (license TBSG) was probed as the second source. It INVERTS
-Longbridge rather than completing it, and at the entry tier it cannot feed
-this engine. Recorded here because re-deriving it costs real quota:
+MEASURED 2026-09-03 — WHAT TIGER SERVES
+---------------------------------------
+Tiger Brokers SG (license TBSG) is the second source. It INVERTS Longbridge
+rather than duplicating it. Recorded here because re-deriving it costs real
+quota:
 
     get_symbols(Market.SG)   -> 1616 symbols, ".SI" format, NOT ".SG"
     get_market_status(SG)    -> works (session times)
@@ -49,6 +51,13 @@ symbol consumes a slot; all frequencies share it; tiers refresh Tuesdays
 08:00 GMT+8. `CANDLE_SPEC` is 40 symbols/tick intraday and 150 swing, so 20
 per MONTH cannot complete one scan. The 200 tier would clear swing; nothing
 clears intraday.
+
+The saving grace, measured: re-requesting a symbol ALREADY inside the 30-day
+window is FREE (quota held at 10/10 across a re-request). So the quota is an
+allowlist of symbols you may follow, not a bandwidth limit — a small watchlist
+can be polled every tick indefinitely. That is what makes SG reachable at all,
+and it is why `TigerSource` refuses any symbol outside its allowlist and never
+returns Tiger's full 1616-name SG list from `discover_symbols()`.
 
 Two consequences if this is ever revisited:
   * Symbol translation is real work, not cosmetic — ".SG" (Longbridge, and

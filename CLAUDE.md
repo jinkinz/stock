@@ -35,6 +35,8 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
 | `models.py` | Dataclasses: Settings, Portfolio, Position (`peak_price` + round-trip entry context, `reset_round_trip()`), Quote (enriched: prev_close/high/low/volume/turnover), Signal, Diagnostics, OrderProposal (has `tag` → exit_reason) |
 | `market_hours.py` | US/HK/SG regular-session times (zoneinfo); `is_market_open`, `market_of`, `markets_status` |
 | `replay.py` | Dev harness: replays real candles through the real engine to prove the fill → ledger path works. `ReplayBroker` subclasses `PaperBroker` (fills/fees inherited unchanged), serves day-to-date quote context from bars. Not a backtest — judge the checks, not the P&L |
+| `market_data.py` | `MarketDataRouter` — routes market DATA per symbol by market, merges results, reports what went missing. Wired in at `AppState.data()`. Execution never follows this routing |
+| `tiger_source.py` | `TigerSource` — SG quotes SYNTHESISED FROM TIGER K-LINES (there is no SG quote endpoint on this account). Read-only; never imports a TradeClient. Holds the quota allowlist |
 | `fees.py` | Per-market brokerage fee schedules (`FeeComponent`/`FeeSchedule`). SG is MEASURED from real contract notes and `verified=True`; US/HK are flagged estimates. Unknown markets fall back to a flat charge — paper fills must never be free |
 | `calibrate_fees.py` | Read-only: compares modelled fees against real `charge_detail` from order history. Run after any real fill to correct `fees.py` with evidence |
 | `premarket.py` | Pre-session watchlist, TWO screens by horizon: intraday = pre-market gappers, swing = 20-day leaders (strength AND near its own highs). Selecting on a one-session gap for a multi-day hold is a horizon mismatch. Pure. Ranks by gap × log-scaled pre-market turnover, gap-UPS only (the engine cannot short), with floors on both gap size and volume. Deliberately has NO AI catalyst filter: with no news API a model shown price+volume can only guess |
@@ -157,6 +159,41 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
   SGD < USD). PAPER mode is exempt by design: its starting cash already is the
   budget, and adding a second ceiling would invalidate baselines measured
   before this change. Covered by `tests/test_live_guards.py`.
+- **`data()` is not `broker()`** (`AppState.data()`). They answer different
+  questions: `broker()` is who FILLS an order, `data()` is who can SEE a price.
+  Same object for US and HK; deliberately different for SG, where Longbridge
+  has no entitlement (quotes come back empty, candles raise 301604) but still
+  accepts orders. **Execution must never follow the data routing** — SG fills
+  stay with Longbridge, whose `fees.SG_SCHEDULE` is `verified=True` against
+  real contract notes and whose `estimate_max_purchase_quantity` backs the
+  cash-cover guard. Tiger is eyes, Longbridge is hands. Falls back to the plain
+  broker when SG routing is unavailable, so a missing `tigeropen` or absent
+  credentials costs SG data and nothing else.
+- **Tiger's K-line quota is a SYMBOL ALLOWLIST, not a rate limit.** It caps
+  DISTINCT SYMBOLS per rolling 30 days (20 at the entry tier, 200 above $10K
+  assets). A symbol is consumed on FIRST REQUEST — including one that returns
+  nothing — and re-requesting a symbol already inside the window is FREE
+  (measured). So polling a small watchlist every tick costs nothing, while
+  touching a new symbol is permanently expensive for a month. Hence
+  `TigerSource` refuses any symbol outside `self.symbols`, and
+  `discover_symbols()` returns that allowlist rather than the 1616 names Tiger
+  will happily list — ONE unfiltered discovery pass would exhaust a month of
+  quota inside a single tick. Set the watchlist with `TIGER_SG_SYMBOLS` in
+  `.env`. This is why SG is a fixed watchlist and NOT a scanned universe:
+  `max_scan_symbols` and turnover discovery are meaningless there.
+- **SG symbols are `.SG` in this repo and `.SI` at Tiger.** Translation lives
+  only in `tiger_source.to_tiger`/`to_repo`. Nine quota slots were burned
+  discovering this; do not spread the conversion around.
+- **A synthesised quote must never claim `trade_status="normal"` without
+  evidence.** Bars carry no halt flag and `Quote.trade_status` defaults to
+  `"normal"`, which would silently assert every SG counter is tradable —
+  including a suspended one, whose stale bars look exactly like a quiet one's.
+  `TigerSource._trade_status()` derives it from BAR FRESHNESS against the
+  exchange session: fresh in an open session = `normal`, stale = `stale`,
+  outside the session = `closed`. `strategy.py:307` turns anything but
+  `normal` into `tradable=False`, so no new veto was needed — the rule is
+  simply not to lie in the Quote. Absence of evidence is not evidence of
+  tradability.
 - Live orders round to whole shares AND board-lot multiples
   (`LongbridgeBroker.lot_size()` from static_info, cached). Live fills are
   confirmed by polling order status after submit — never assume a fill.
@@ -340,6 +377,13 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
 
 - `.env` lives at `.env` (loader: script dir → cwd → `~/.env`);
   git-ignored; contains real keys. Loader skips empty values silently.
+- Tiger (SG market data only) in `.env`: `TIGER_ID`, `TIGER_ACCOUNT`,
+  `TIGER_PRIVATE_KEY` (BARE base64 from `private_key_pk8` — no PEM header, no
+  newlines), `TIGER_LICENSE`, and optionally `TIGER_SG_SYMBOLS`. Entitlements
+  on this account are `aStockQuoteLv1` only, so every Tiger QUOTE endpoint is
+  denied and only K-lines work. `QuoteClient` is built with
+  `is_grab_permission=False`: grabbing SEIZES the market-data device slot and
+  kicks the user's own Tiger app off the live feed. Bars do not need it.
 - Longbridge access tokens expire (~90 days) — "suddenly disconnected" usually
   means regenerate the token.
 - Longbridge rate limits: ~10 quote req/s, 30 trade calls/30s
