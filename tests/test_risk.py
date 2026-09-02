@@ -21,7 +21,11 @@ from risk import COOLDOWN_MINUTES, RiskState, check_limits  # noqa: E402
 
 
 def settings(**kwargs) -> Settings:
-    base = dict(max_concurrent_positions=0, budget=0.0, daily_turnover_multiple=0.0,
+    # Every limit is switched off so each test exercises one rule in isolation
+    # — except the concentration cap, which no longer HAS an off switch (see
+    # MaxPositionsHasNoSentinelTest). The highest legal value is the closest
+    # thing available, so tests for other rules must stay under it.
+    base = dict(max_concurrent_positions=20, budget=0.0, daily_turnover_multiple=0.0,
                 daily_loss_limit=0.0, cooldown_after_losses=0)
     base.update(kwargs)
     return Settings(**base).normalized()
@@ -105,9 +109,16 @@ class ConcurrentPositionsTest(unittest.TestCase):
         self.assertIsNone(check_limits(settings(max_concurrent_positions=5), 4,
                                        RiskState(), "AAPL.US", 100.0, UTC_NOON))
 
-    def test_zero_disables_the_rule(self):
-        self.assertIsNone(check_limits(settings(max_concurrent_positions=0), 500,
-                                       RiskState(), "AAPL.US", 100.0, UTC_NOON))
+    def test_zero_no_longer_disables_the_rule(self):
+        # It used to. But 0 meant "no cap" here while sizing.cash_fraction_for
+        # read the same 0 as "assume four positions" and funded each at 25% of
+        # cash — so typing 0 to mean "let the engine decide" removed the
+        # concentration limit AND shrank every position below the viability
+        # floor. 0 now falls back to the default instead.
+        denial = check_limits(settings(max_concurrent_positions=0), 500,
+                              RiskState(), "AAPL.US", 100.0, UTC_NOON)
+        self.assertIsNotNone(denial)
+        self.assertIn("max 5", denial)
 
 
 class DailyLossLimitTest(unittest.TestCase):
@@ -227,10 +238,13 @@ class PersistenceTest(unittest.TestCase):
 
 class RuleIndependenceTest(unittest.TestCase):
     def test_all_rules_off_never_blocks(self):
+        # 99 open positions would now trip the concentration cap on its own —
+        # it is the one rule that cannot be switched off — so this stays under
+        # it and still proves the other three are independent.
         state = RiskState()
         state.record_buy("AAPL.US", 10_000.0, UTC_NOON)
         state.record_close("AAPL.US", -9_000.0, 0, UTC_NOON)
-        self.assertIsNone(check_limits(settings(), 99, state, "AAPL.US", 5_000.0, UTC_NOON))
+        self.assertIsNone(check_limits(settings(), 19, state, "AAPL.US", 5_000.0, UTC_NOON))
 
 
 if __name__ == "__main__":

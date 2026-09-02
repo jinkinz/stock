@@ -36,12 +36,36 @@ class OrderStatus(str, Enum):
 # SEPARATE saved profiles so switching horizon does not destroy the other one's
 # tuning — and so the two can be compared honestly.
 HORIZON_FIELDS = (
-    "duration_minutes", "max_hold_days", "stop_at_end", "lock_profit_pct", "stop_loss_pct",
+    "duration_minutes", "max_hold_days", "max_hold_minutes", "stop_at_end",
+    "lock_profit_pct", "stop_loss_pct", "breakeven_trigger_pct",
     "target_profit", "target_profit_per_hour", "max_scan_symbols",
     "daily_turnover_multiple",
     "trailing_stop_pct", "tick_interval_seconds", "risk_per_trade_pct",
     "atr_stop_multiple",
 )
+
+# Which entry confirmations constitute the TRADE THESIS — the ones whose loss
+# means the reason for being in the trade has expired.
+#
+# Only trend (EMA9>EMA21) and vwap qualify. The other three flip constantly on
+# a 1-minute bar: `momentum` is a 3-vs-N tick average that crosses zero on
+# noise, `volume` compares against a session mean that itself moves, and
+# `structure` (range position) drops below 0.66 on any pullback inside an
+# intact uptrend. Exiting on those would fire on chop, and every firing costs a
+# full round trip.
+#
+# ── MEASURED, AND IT IS WHY exit_on_thesis_break SHIPS OFF ──────────────────
+# Restricting the thesis to these two was NOT enough. Over 60 replayed trades
+# the thesis exit fired on 54 of 75, won 3.7% of them, and took expectancy
+# from -0.45 to -4.88 and fees from 24% to 70% of gross. Even "structural"
+# factors cross back and forth repeatedly inside a trend at intraday
+# resolution, so the rule mostly ejects trades that were going to work.
+#
+# The idea is sound in principle — a thesis that has expired IS worth acting
+# on — but no cheap version of it survived contact with the data. Anything
+# that revives it needs hysteresis (require the break to persist N bars) and
+# has to beat the price-only baseline on a train/test split before shipping on.
+THESIS_FACTORS = ("trend", "vwap")
 
 # Which AI styles suit which horizon. `conservative` and `aggressive` are risk
 # postures and work on both; the rest encode a holding period in their prompt.
@@ -56,10 +80,33 @@ HORIZON_DEFAULTS: dict[str, dict] = {
         # restores what a fresh install actually had rather than a second,
         # subtly different set of "defaults".
         "duration_minutes": 390, "max_hold_days": 0, "stop_at_end": True,
+        # DERIVED FROM THE SESSION, not from the churn budget. The first
+        # attempt divided the deployment allowance by position size to get 130
+        # minutes — arithmetic about how fast capital MAY recycle, which is a
+        # different question from how long the edge takes to appear. Replay
+        # settled it: winning trades ran a median of 1080 minutes and 74% of
+        # them lasted past 120, so a 120-minute stop cut three quarters of the
+        # winners and dropped the win rate from 51.7% to 30.2%.
+        #
+        # 240 is ~60% of the 390-minute session: long enough to be INERT in
+        # normal operation (a Min_1 replay closed the identical 16 trades with
+        # it on or off), short enough to bound the case it exists for — a
+        # position that has consumed most of the session without resolving
+        # while stronger setups are refused for want of a slot.
+        "max_hold_minutes": 240,
         "target_profit": 0.0, "target_profit_per_hour": 0.0,
         # Shipping with the target OFF left the viability guard unable to
         # assess anything, so a structurally unprofitable setup passed silently.
         "lock_profit_pct": 0.8, "stop_loss_pct": 1.0, "trailing_stop_pct": 0.0,
+        # OFF, on measurement. Half the target (0.4%) looked sound — ~1.2x
+        # intraday ATR, comfortably outside noise — and still lost money: over
+        # 60 replayed trades it left the trade COUNT unchanged at 60 while
+        # dropping the win rate from 51.7% to 43.3% and net from -26.82 to
+        # -48.47. It was not stopping losers, it was converting winners that
+        # dipped before running into flat exits at the dip. Enable it only
+        # against evidence from your own window:
+        #   python3 replay.py --breakeven-pct 0.4 --no-thesis-exit
+        "breakeven_trigger_pct": 0.0,
         "tick_interval_seconds": 60,
         # Pool ~5x the candle budget (40): real selection without the ranking
         # pass dominating.
@@ -78,11 +125,18 @@ HORIZON_DEFAULTS: dict[str, dict] = {
         # inert here — kept at a valid value rather than 0, which normalized()
         # would clamp to a misleading 1 minute.
         "duration_minutes": 390, "max_hold_days": 10, "stop_at_end": False,
+        # Inert here by design: max_hold_days is swing's time stop. A minute
+        # clock would fire inside the first session of a multi-day thesis.
+        "max_hold_minutes": 0,
         # Hourly pacing is intrinsically an intraday idea — you are racing a
         # closing bell. A swing target is an absolute figure with no clock.
         "target_profit": 0.0, "target_profit_per_hour": 0.0,
         # Wide enough to clear round-trip costs, which intraday targets cannot.
         "lock_profit_pct": 3.0, "stop_loss_pct": 2.0, "trailing_stop_pct": 0.0,
+        # OFF for the same measured reason as intraday. Swing dips are larger
+        # and last longer, so if anything the case against arming a breakeven
+        # stop here is stronger, not weaker.
+        "breakeven_trigger_pct": 0.0,
         # Daily bars change once a day; polling every minute is waste.
         "tick_interval_seconds": 900,
         # ~3.3x the swing candle budget (150).
@@ -113,6 +167,35 @@ class Settings:
     # P&L. The swing equivalent of a session timer — a position drifting
     # sideways for a month is capital doing nothing. 0 = hold indefinitely.
     max_hold_days: int = 0
+    # Intraday's per-position clock — the counterpart of max_hold_days at a
+    # scale where days are meaningless. Without it the ONLY things that can
+    # release a slot are the target, the stop, and the closing bell, so a
+    # position drifting at +0.3% holds capital for the whole session while
+    # stronger setups are refused for want of a slot. 0 = no time limit.
+    #
+    # This is a REAL cost, not a free win: the freed slot gets refilled, and
+    # the replacement pays a full round trip. It only pays if the replacement
+    # beats what it displaced by more than that cost — see USER_GUIDE §5.3.
+    max_hold_minutes: int = 240
+    # Once a trade has proved itself by this much, move the stop to the entry
+    # price so it cannot become a loser. 0 = disabled, which is the shipped
+    # default: MEASURED at a loss (see below), because trades routinely dip
+    # before they run and this exits them flat at the dip.
+    breakeven_trigger_pct: float = 0.0
+    # Exit when the reasoning that justified the entry stops being true, rather
+    # than waiting for a price level. Only STRUCTURAL factors count (see
+    # THESIS_FACTORS). OFF by default — MEASURED as by far the most damaging
+    # of these rules; see the note below.
+    exit_on_thesis_break: bool = False
+    # Let a materially stronger signal take the slot of the weakest holding.
+    # OFF by default: each swap costs a full round trip (~1.0% at $500,
+    # ~1.8% at $250) and the score->return relationship that would justify it
+    # has not been measured on this account. Prove it in replay first.
+    allow_rotation: bool = False
+    # How much better the challenger must score. 0.15 is a placeholder, NOT a
+    # measured threshold — it is deliberately wide enough that only a clear
+    # difference triggers a swap.
+    rotation_score_gap: float = 0.15
     max_loss: float = 25.0
     # $250 costs 1.70% round trip in the US — more than any realistic intraday
     # target, so the shipped default was unprofitable by construction. At
@@ -188,6 +271,11 @@ class Settings:
         self.budget = max(0.0, float(self.budget))
         self.duration_minutes = max(1, int(self.duration_minutes))
         self.max_hold_days = max(0, int(self.max_hold_days))
+        self.max_hold_minutes = max(0, int(self.max_hold_minutes))
+        self.breakeven_trigger_pct = max(0.0, float(self.breakeven_trigger_pct))
+        self.exit_on_thesis_break = bool(self.exit_on_thesis_break)
+        self.allow_rotation = bool(self.allow_rotation)
+        self.rotation_score_gap = max(0.0, min(1.0, float(self.rotation_score_gap)))
         # No magic sentinel. "0" reads as "none" but used to mean "maximum",
         # which made the least-recommended value the most tempting one. A
         # non-positive value now falls back to this horizon's default rather
@@ -204,6 +292,12 @@ class Settings:
         self.target_profit_per_hour = max(0.0, float(self.target_profit_per_hour))
         self.lock_profit_pct = max(0.0, float(self.lock_profit_pct))
         self.stop_loss_pct = max(0.0, float(self.stop_loss_pct))
+        # A breakeven trigger at or above the target can never arm — the profit
+        # lock fires first and closes the trade. Left alone it would sit in the
+        # UI looking like active protection while being incapable of firing,
+        # which is the same failure mode as a sector cap with no sector data.
+        if self.lock_profit_pct > 0 and self.breakeven_trigger_pct >= self.lock_profit_pct:
+            self.breakeven_trigger_pct = round(self.lock_profit_pct / 2.0, 4)
         self.trailing_stop_pct = max(0.0, float(self.trailing_stop_pct))
         self.enforce_trade_viability = bool(self.enforce_trade_viability)
         self.min_confirmations = max(0, min(5, int(self.min_confirmations)))
@@ -212,7 +306,19 @@ class Settings:
         self.use_atr_sizing = bool(self.use_atr_sizing)
         self.use_premarket_watchlist = bool(self.use_premarket_watchlist)
         self.premarket_watchlist_size = max(0, min(200, int(self.premarket_watchlist_size)))
-        self.max_concurrent_positions = max(0, int(self.max_concurrent_positions))
+        # No "0 = unlimited" sentinel, for the same reason max_scan_symbols
+        # lost its own: it made the least-advisable value the most tempting one
+        # to type. Worse, 0 meant two contradictory things — risk.check_limits
+        # read it as "no cap at all", while sizing.cash_fraction_for read it as
+        # "assume four positions" and funded each at 25% of cash. Setting it to
+        # 0 therefore removed the concentration limit AND shrank every position
+        # to the size that fails the viability floor at a small budget.
+        # The number of slots is a real decision with real arithmetic behind
+        # it; there is no value that lets the engine avoid making it.
+        positions = int(self.max_concurrent_positions)
+        if positions <= 0:
+            positions = type(self).max_concurrent_positions
+        self.max_concurrent_positions = max(1, min(20, positions))
         self.daily_turnover_multiple = max(0.0, float(self.daily_turnover_multiple))
         self.daily_loss_limit = max(0.0, float(self.daily_loss_limit))
         self.cooldown_after_losses = max(0, int(self.cooldown_after_losses))
@@ -299,6 +405,14 @@ class Settings:
             "min_confirmations": self.min_confirmations,
             "lock_profit_pct": self.lock_profit_pct,
             "stop_loss_pct": self.stop_loss_pct,
+            # Each of these adds an exit the trade would not otherwise have
+            # taken, so a trade closed with them on is not comparable to one
+            # closed without.
+            "max_hold_minutes": self.max_hold_minutes,
+            "breakeven_trigger_pct": self.breakeven_trigger_pct,
+            "thesis_exit": bool(self.exit_on_thesis_break),
+            "rotation": (round(self.rotation_score_gap, 3)
+                         if self.allow_rotation else False),
             "trailing_stop_pct": self.trailing_stop_pct,
             "sizing": "atr" if self.use_atr_sizing else "flat",
             # Changes WHICH symbols are candidates, so outcomes with and
@@ -352,6 +466,14 @@ class Position:
     # say a trade lost money but not what settings produced it — which makes
     # "what actually works" unanswerable after the fact.
     entry_config: dict = field(default_factory=dict)
+    # The confirmations that were true at entry — the trade's stated thesis.
+    # Kept so the engine can ask "is the reason I bought this still true?"
+    # instead of only ever comparing price against the entry price.
+    entry_confirmations: list = field(default_factory=list)
+    # Set once the position has gained breakeven_trigger_pct. Latching rather
+    # than recomputing means a trade that ran up and pulled back keeps its
+    # protection instead of quietly losing it on the retrace.
+    breakeven_armed: bool = False
     fees_paid: float = 0.0           # fees across entry + all (partial) exits
     exit_qty: float = 0.0            # shares sold so far this round trip
     exit_proceeds: float = 0.0       # gross proceeds so far (before fees)
@@ -366,6 +488,8 @@ class Position:
         self.entry_mode = ""
         self.entry_diagnostics = {}
         self.entry_config = {}
+        self.entry_confirmations = []
+        self.breakeven_armed = False
         self.fees_paid = 0.0
         self.exit_qty = 0.0
         self.exit_proceeds = 0.0
@@ -425,6 +549,11 @@ class Signal:
     action: str
     reason: str
     diagnostics: Diagnostics | None = None
+    # Confirmations currently true for this symbol. Recorded on the Position at
+    # entry as the trade's thesis, then re-read each tick to detect the thesis
+    # breaking. Always populated — including on `watch` signals — so a held
+    # symbol that stops qualifying can still be evaluated.
+    confirmations: list = field(default_factory=list)
 
 
 @dataclass

@@ -143,6 +143,24 @@
             <input id="trailingStopPct" type="number" min="0" step="0.1" value="0" placeholder="e.g. 1" />
           </div>
           <div class="hint-inline" style="padding:0 2px 8px">Guaranteed mechanical rules, independent of AI judgment: Lock Profit sells a position once it gains that %; Stop Loss sells once it loses that % from entry; Trailing Stop sells a profitable position falling that % below its peak.</div>
+
+          <div class="field-row">
+            <div class="field" id="stallField">
+              <label for="maxHoldMinutes">Max hold (minutes) <span class="hint-inline">0 = off</span></label>
+              <input id="maxHoldMinutes" type="number" min="0" step="10" value="240" />
+            </div>
+            <div class="field">
+              <label for="breakevenTriggerPct">Breakeven at (%) <span class="hint-inline">0 = off</span></label>
+              <input id="breakevenTriggerPct" type="number" min="0" step="0.1" value="0" placeholder="e.g. 0.4" />
+            </div>
+          </div>
+          <label class="toggle"><input id="exitOnThesisBreak" type="checkbox" /><span>Exit when the entry reason stops being true</span></label>
+          <label class="toggle"><input id="allowRotation" type="checkbox" /><span>Let a stronger signal take a weak position's slot</span></label>
+          <div class="field" id="rotationGapField" style="display:none">
+            <label for="rotationScoreGap">Rotation score gap <span class="hint-inline">how much better the challenger must be</span></label>
+            <input id="rotationScoreGap" type="number" min="0" max="1" step="0.05" value="0.15" />
+          </div>
+          <div class="hint-inline" style="padding:0 2px 8px">These free a slot on something other than price, so a position that is going nowhere stops blocking better setups. They are not free — the freed slot gets refilled and the replacement pays a full round trip. <strong>All but the time stop ship OFF because they measured worse than price-only exits over 60 replayed trades</strong> (breakeven &minus;0.81 vs &minus;0.45 expectancy; thesis break &minus;4.88). Measure on your own window before enabling: <code>python3 replay.py --legacy-exits</code> to see the baseline.</div>
           <div class="field-row">
             <div class="field">
               <label for="riskPerTradePct">Risk / Trade (%) <span class="hint-inline">of equity</span></label>
@@ -157,8 +175,8 @@
           <div class="hint-inline" style="padding:0 2px 8px">Sizes each trade so a stop-out costs the same % of equity whatever the symbol's volatility, and sets each position's stop from its own ATR rather than a flat %. Turning sizing off reverts to the flat Max Trade Value (larger positions, larger swings); ATR stops still apply.</div>
           <div class="field-row">
             <div class="field">
-              <label for="maxConcurrentPositions">Max Positions <span class="hint-inline">0 = off</span></label>
-              <input id="maxConcurrentPositions" type="number" min="0" step="1" value="5" />
+              <label for="maxConcurrentPositions">Max Positions <span class="hint-inline">sets each position's size</span></label>
+              <input id="maxConcurrentPositions" type="number" min="1" max="20" step="1" value="5" />
             </div>
             <div class="field">
               <label for="cooldownAfterLosses">Cooldown after N losses</label>

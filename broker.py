@@ -282,6 +282,8 @@ class PaperBroker:
                         "entry_strategy": pos.entry_strategy, "entry_mode": pos.entry_mode,
                         "entry_diagnostics": pos.entry_diagnostics,
                         "entry_config": pos.entry_config,
+                        "entry_confirmations": list(pos.entry_confirmations),
+                        "breakeven_armed": pos.breakeven_armed,
                         "fees_paid": pos.fees_paid, "exit_qty": pos.exit_qty,
                         "exit_proceeds": pos.exit_proceeds,
                     }

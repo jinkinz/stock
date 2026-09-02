@@ -54,13 +54,18 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
    counts as NOT confirmed, never as confirmed. Blocked signals are downgraded
    to `watch` with score capped below 0.55 so nothing ranking on score still
    treats them as candidates.
-2. **Mechanical exits** run BEFORE the AI each tick: profit lock → stop loss →
-   trailing stop (uses `Position.peak_price`), plus max-loss circuit breaker.
+2. **Mechanical exits** run BEFORE the AI each tick, first match wins:
+   max_hold (days, swing) → **stall** (minutes, intraday) → profit lock →
+   stop loss → **breakeven** → trailing stop → **thesis break**, plus the
+   max-loss circuit breaker. Then `_check_rotation()` separately.
    The AI can exit earlier but never hold past these. The stop is
    `Position.stop_price` (absolute, fixed at entry from that symbol's ATR) when
    set, falling back to flat `stop_loss_pct` when ATR was unavailable. A
    position carrying an ATR stop keeps the exit loop alive even when every
    percentage setting is 0.
+   The last four are **slot-releasing** exits — they answer "is this still
+   worth a slot?" rather than "what is it worth?". See the measured-defaults
+   note under Invariants before changing any of them.
 3. **AI brain** (≤1 call/30s) returns JSON decisions; sanitizer caps SELL at
    held qty, BUY at min(max_trade_value, 35% cash), max 5 proposals.
 
@@ -167,6 +172,30 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
 - `max_scan_symbols` has NO sentinel: 0 or negative falls back to the horizon
   default, values are clamped to 25..2000. "0 = unlimited" made the
   least-recommended value the most tempting one to type.
+- `max_concurrent_positions` has NO sentinel either, for a worse reason: 0 used
+  to mean two contradictory things at once. `risk.check_limits` read `cap > 0`
+  as "no concentration cap at all", while `sizing.cash_fraction_for` read
+  `<= 0` as "assume four positions" and funded each at 25% of cash. Typing 0 to
+  mean "let the engine decide" therefore removed the protection AND shrank
+  every position to the size that fails the viability floor on a small account.
+  0/negative now falls back to the default (5), clamped 1..20 — **the cap can
+  never be switched off**, because a concentration limit with an off switch is
+  protection that does not exist. This setting is also the SIZING DIVISOR
+  (`cash_fraction_for` = `min(0.50, 1/N)`), so it is not just a ceiling:
+  holding fewer at once makes each position bigger, which is often the only
+  lever that clears the viability floor at a small budget.
+- **Position size is a share of EQUITY, never of remaining cash**
+  (`sizing._clamp_to_budget`). Charging the fraction against `spendable`
+  re-applied the same percentage to a pool each purchase shrank, so slots
+  decayed geometrically — $1,000 over 5 slots produced $250/$187/$141/$105/$79.
+  Only the FIRST cleared its own round-trip cost; every later one was
+  unprofitable purely because it was opened later, and $237 was never deployed
+  at all. `spendable` stays a hard ceiling (you cannot spend cash you do not
+  have) but must never be the BASE. Fixing this moved replay expectancy from
+  −0.45 to −0.06 — a bigger gain than any exit rule produced. `cash_fraction_for`
+  also lost its old 0.25 FLOOR, which made >4 slots impossible to equal-weight
+  (five positions each claiming 25% want 125% of the account). Pinned by
+  `EqualWeightSlotsTest`, which asserts `cash_fraction_for(n) * n == 1.0`.
 - **Horizon audit checklist.** Swing was retrofitted onto an intraday-shaped
   app, so intraday constants keep surviving where the switch does not reach.
   Before adding ANY time-based constant, check it against both horizons
@@ -205,6 +234,46 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
 - `max_hold_days` is swing's replacement for `duration_minutes`: closes a
   position held that long regardless of P&L (`exit_reason: max_hold`), because
   a session timer can never fire when sessions never expire.
+- **Slot-releasing exits are MEASURED, and three of four ship OFF.** The
+  position cap means a stalled trade blocks better setups (52 blocked buys in
+  one observed session, all `max 2 positions`). Freeing that slot is NOT free:
+  the slot gets refilled and the replacement pays a full round trip, so it only
+  pays if the replacement beats what it displaced by more than that cost — a
+  67% win rate at $500/position, 93% at $250. Measured over 60 replayed round
+  trips against the price-only baseline (`replay.py --legacy-exits`):
+
+  | config | expectancy | win rate | net |
+  |---|---|---|---|
+  | baseline (price exits only) | **−0.06** | **54.8%** | **−3.96** |
+  | + stall 120 min | −0.47 | 32.8% | −30.08 |
+  | + breakeven 0.4% | −0.78 | 37.5% | −49.85 |
+  | + stall 240 min (shipped) | −0.83 | 39.1% | −52.93 |
+  | + thesis break | −4.52 | 17.6% | −334.40 |
+
+  (Re-measured after the equal-weight sizing fix below, which moved the
+  baseline from −0.45 to −0.06 on its own — a bigger improvement than any exit
+  rule produced. Numbers recorded before that fix are not comparable.)
+
+  So: `breakeven_trigger_pct`, `exit_on_thesis_break` and `allow_rotation` ship
+  **off**; only `max_hold_minutes` ships on, at **240** — derived from the
+  session (~60% of 390), NOT from the churn budget. The first attempt derived
+  120 from `daily_turnover_multiple ÷ cash fraction`, which answers how fast
+  capital MAY recycle rather than how long the edge takes to appear: winners
+  ran a median of 1080 minutes and 74% lasted past 120, so it cut three
+  quarters of them. At 240 it is NEUTRAL in a faithful one-session replay
+  (−186.64 vs −186.63 net, 28 trades vs 27) while still bounding the case it
+  exists for; it only costs money on windows where positions run for days,
+  which is a regime it should never see (swing has `max_hold_days`).
+  Note the default Min_15×400-bar replay spans ~15 trading days with
+  `duration_minutes=100_000`, so `stop_at_end` never fires and positions run
+  for days — it is NOT a faithful intraday test. Use `--period Min_1 --bars 390`
+  for that, and mind that it yields ~16 trades, below the sample warning.
+  Re-enable any of these only with forward evidence from a train/test split.
+- Thesis exits read `Position.entry_confirmations` (captured once on the
+  opening fill) against the live scan, restricted to `models.THESIS_FACTORS`
+  = trend + vwap. The other three confirmations flip on chop. A position with
+  no recorded thesis, or a symbol missing from this tick's signals, is NEVER
+  exited — absence of evidence must not become evidence.
 - The AI prompt must NOT show a countdown in swing mode — `ai_strategy.py`
   branches on `settings.is_swing`. Feeding a fake deadline to a model that is
   told to act on urgency is how you get invented urgency.

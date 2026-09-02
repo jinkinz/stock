@@ -21,6 +21,7 @@ from models import (
     Position,
     Settings,
     Side,
+    THESIS_FACTORS,
     TradingMode,
     to_json,
 )
@@ -139,6 +140,14 @@ class AppState:
                     entry_mode=pos.get("entry_mode", ""),
                     entry_diagnostics=pos.get("entry_diagnostics") or {},
                     entry_config=pos.get("entry_config") or {},
+                    # Absent in states written before thesis exits existed. An
+                    # empty list disables the thesis check for that position
+                    # rather than inventing a thesis it was never opened on.
+                    entry_confirmations=pos.get("entry_confirmations") or [],
+                    # Must survive a restart: re-deriving it from the current
+                    # gain would silently disarm protection a trade had already
+                    # earned, exactly when the position is underwater.
+                    breakeven_armed=bool(pos.get("breakeven_armed", False)),
                     fees_paid=float(pos.get("fees_paid", 0)),
                     exit_qty=float(pos.get("exit_qty", 0)),
                     exit_proceeds=float(pos.get("exit_proceeds", 0)),
@@ -778,6 +787,11 @@ class TradingEngine:
                 # Hard guarantees independent of AI judgment — run BEFORE the
                 # AI scan so a breached threshold always exits this tick.
                 lock_proposals = self._check_mechanical_exits(quotes)
+                # Runs after the mechanical exits so a position already being
+                # closed for a real reason is never also proposed for rotation
+                # (the dedupe below drops the second proposal on the same
+                # symbol+side, and the mechanical reason is the truthful one).
+                lock_proposals += self._check_rotation(quotes)
                 pending_locks = {(i.symbol, i.side) for i in STATE.proposals if i.status is OrderStatus.PROPOSED}
                 for proposal in lock_proposals:
                     if (proposal.symbol, proposal.side) in pending_locks:
@@ -831,7 +845,9 @@ class TradingEngine:
                         "stop_loss_pct", "trailing_stop_pct", "ai_strategy_name",
                         "enforce_trade_viability", "min_confirmations",
                         "risk_per_trade_pct", "atr_stop_multiple", "use_atr_sizing",
-                        "max_hold_days", "use_premarket_watchlist",
+                        "max_hold_days", "max_hold_minutes", "breakeven_trigger_pct",
+                        "exit_on_thesis_break", "allow_rotation", "rotation_score_gap",
+                        "use_premarket_watchlist",
                         "premarket_watchlist_size",
                         "max_concurrent_positions", "daily_turnover_multiple",
                         "daily_loss_limit", "cooldown_after_losses",
@@ -899,6 +915,10 @@ class TradingEngine:
             for field in ("max_trade_value", "min_confirmations", "use_atr_sizing",
                           "max_concurrent_positions", "cooldown_after_losses",
                           "daily_turnover_multiple",
+                          # Rotation resets to OFF: it is the one exit here
+                          # whose benefit is unmeasured, so "recommended"
+                          # must not quietly switch it on.
+                          "exit_on_thesis_break", "allow_rotation", "rotation_score_gap",
                           "enforce_trade_viability", "use_premarket_watchlist"):
                 value = getattr(fresh, field)
                 if getattr(settings, field, None) != value:
@@ -1335,6 +1355,15 @@ class TradingEngine:
                     position.entry_strategy = STATE.settings.ai_strategy_name
                     position.entry_mode = mode
                     position.entry_config = STATE.settings.config_fingerprint()
+                    # The stated reason for owning this, captured once on the
+                    # opening fill. Adding to a position must not rewrite the
+                    # thesis it was opened on — otherwise a top-up during a
+                    # deteriorating setup would quietly relabel the trade as
+                    # justified by whatever happens to be true at that moment.
+                    signal = next((s for s in STATE.signals
+                                   if s.symbol == proposal.symbol), None)
+                    position.entry_confirmations = list(
+                        getattr(signal, "confirmations", []) or [])
                 # Fix the stop at entry from the symbol's own volatility, so a
                 # quiet name and a violent one don't get the same 2% leash.
                 # Only on the opening fill — adding to a position must not
@@ -1774,12 +1803,25 @@ class TradingEngine:
 
     def _check_mechanical_exits(self, quotes) -> list[OrderProposal]:
         """Mechanical, AI-independent exit rules that run every tick BEFORE
-        the AI gets a chance to act. Three independent triggers per position:
+        the AI gets a chance to act. Checked in priority order, first match
+        wins, one proposal per position:
 
-          profit lock    — unrealized gain ≥ lock_profit_pct  → sell all
-          stop loss      — loss from entry ≥ stop_loss_pct    → sell all
-          trailing stop  — while in profit, price fell trailing_stop_pct
-                           below its peak since entry         → sell all
+          max hold (days)  — swing time stop                    → sell all
+          stall (minutes)  — intraday time stop: the trade has   → sell all
+                             had its chance and is holding a slot
+          profit lock      — unrealized gain ≥ lock_profit_pct   → sell all
+          stop loss        — ATR stop, else stop_loss_pct        → sell all
+          breakeven        — armed after breakeven_trigger_pct,  → sell all
+                             then price fell back to entry
+          trailing stop    — while in profit, price fell         → sell all
+                             trailing_stop_pct below its peak
+          thesis break     — a structural confirmation that was  → sell all
+                             true at entry no longer is
+
+        PRICE-BASED exits (lock/stop/trailing) ask "what is it worth?".
+        The other three ask "is this still worth a slot?" — they exist because
+        price alone cannot tell you that a trade has stopped working, only
+        that it has not yet hit a number.
 
         These are hard guarantees; the AI can exit earlier on its own
         judgment but can never hold past these thresholds."""
@@ -1787,15 +1829,30 @@ class TradingEngine:
         lock_pct = settings.lock_profit_pct
         stop_pct = settings.stop_loss_pct
         trail_pct = settings.trailing_stop_pct
+        breakeven_pct = settings.breakeven_trigger_pct
         # A position can carry an absolute ATR stop even when every percentage
         # setting is 0, so the presence of one has to keep this loop alive.
         portfolio_positions = STATE.broker().portfolio().positions
         has_atr_stop = any(p.stop_price > 0 and p.quantity > 0
                            for p in portfolio_positions.values())
         max_hold_days = settings.max_hold_days
-        if (lock_pct <= 0 and stop_pct <= 0 and trail_pct <= 0
-                and not has_atr_stop and max_hold_days <= 0):
+        # Horizon-guarded, not just profile-defaulted. Swing's profile sets
+        # this to 0, but a Settings built directly (tests, an API payload, a
+        # state file written before the field existed) inherits the intraday
+        # dataclass default — and a 120-minute clock would then close a
+        # multi-day thesis inside its first session. The horizon is the fact;
+        # the value is only a setting.
+        max_hold_minutes = 0 if settings.is_swing else settings.max_hold_minutes
+        thesis_exit = settings.exit_on_thesis_break
+        if (lock_pct <= 0 and stop_pct <= 0 and trail_pct <= 0 and breakeven_pct <= 0
+                and not has_atr_stop and max_hold_days <= 0 and max_hold_minutes <= 0
+                and not thesis_exit):
             return []
+        # Current confirmations per symbol, for the thesis check. Read from the
+        # scan this tick already performed — never recomputed here, so the exit
+        # and the entry can never disagree about what is true right now.
+        live_confirmations = {s.symbol: set(getattr(s, "confirmations", []) or [])
+                              for s in STATE.signals}
         # Tool-owned positions only: a stop loss must never reach into shares
         # the user bought themselves.
         portfolio = STATE.broker().portfolio()
@@ -1810,19 +1867,38 @@ class TradingEngine:
             gain_pct = (quote.price / position.avg_cost - 1.0) * 100
             reason = None
             tag = ""
-            held_days = 0.0
-            if max_hold_days > 0 and position.opened_at:
+            # Latch the breakeven guarantee the first time the trade earns it.
+            # Re-deriving it from the CURRENT gain each tick would hand the
+            # protection back the moment price retraced — which is precisely
+            # the moment it is needed.
+            if breakeven_pct > 0 and gain_pct >= breakeven_pct:
+                position.breakeven_armed = True
+            held_days = held_minutes = 0.0
+            if (max_hold_days > 0 or max_hold_minutes > 0) and position.opened_at:
                 try:
                     opened = datetime.fromisoformat(position.opened_at)
-                    held_days = (self._now() - opened).total_seconds() / 86400
+                    held_seconds = (self._now() - opened).total_seconds()
+                    held_days = held_seconds / 86400
+                    held_minutes = held_seconds / 60
                 except ValueError:
-                    held_days = 0.0
+                    held_days = held_minutes = 0.0
             if max_hold_days > 0 and held_days >= max_hold_days:
                 # The swing equivalent of a session timer: capital sitting in a
                 # position that has not resolved is capital doing nothing.
                 reason = (f"Max hold reached: held {held_days:.1f} days "
                           f"(limit {max_hold_days}), P&L {gain_pct:+.2f}%.")
                 tag = "max_hold"
+            elif max_hold_minutes > 0 and held_minutes >= max_hold_minutes:
+                # Intraday's per-position clock. The trade had its window and
+                # did not resolve, so the slot goes back into service. Fires on
+                # winners and losers alike — it is a statement about time, not
+                # about P&L, and a position at +0.3% for two hours is the exact
+                # case it exists for.
+                reason = (f"Stalled out: held {held_minutes:.0f} min "
+                          f"(limit {max_hold_minutes}) without reaching "
+                          f"+{lock_pct:.2f}% or -{stop_pct:.2f}%; "
+                          f"P&L {gain_pct:+.2f}%. Freeing the slot.")
+                tag = "stall"
             elif lock_pct > 0 and gain_pct >= lock_pct:
                 reason = f"Profit lock: +{gain_pct:.2f}% ≥ {lock_pct:.2f}% threshold."
                 tag = "profit_lock"
@@ -1844,18 +1920,109 @@ class TradingEngine:
             elif position.stop_price <= 0 and stop_pct > 0 and gain_pct <= -stop_pct:
                 reason = f"STOP LOSS: {gain_pct:.2f}% ≤ -{stop_pct:.2f}% threshold."
                 tag = "stop_loss"
+            elif position.breakeven_armed and gain_pct <= 0:
+                # It got far enough to prove itself, then gave all of it back.
+                # Ranked below the real stops so a genuine stop-out is still
+                # reported as one, and above trailing because it is the tighter
+                # promise: this trade is no longer allowed to lose money.
+                reason = (f"Breakeven stop: ran to +{breakeven_pct:.2f}% and gave "
+                          f"it back ({gain_pct:+.2f}%). Closed flat rather than "
+                          f"letting a proven winner turn into a loser.")
+                tag = "breakeven"
             elif trail_pct > 0 and position.peak_price > position.avg_cost:
                 drop_from_peak = (1.0 - quote.price / position.peak_price) * 100
                 if drop_from_peak >= trail_pct:
                     reason = (f"Trailing stop: {drop_from_peak:.2f}% below peak "
                               f"${position.peak_price:.2f} (limit {trail_pct:.2f}%).")
                     tag = "trailing_stop"
+            elif thesis_exit and position.entry_confirmations:
+                # The reason for owning this expired. Checked LAST so every
+                # price-based guarantee keeps precedence, and restricted to
+                # THESIS_FACTORS — the noisy confirmations flip on chop and
+                # would spend a round trip each time.
+                entry_thesis = {c for c in position.entry_confirmations
+                                if c in THESIS_FACTORS}
+                if entry_thesis and symbol in live_confirmations:
+                    broken = sorted(entry_thesis - live_confirmations[symbol])
+                    if broken:
+                        reason = (f"Thesis broken: bought on {', '.join(sorted(entry_thesis))} "
+                                  f"but {', '.join(broken)} no longer holds "
+                                  f"(P&L {gain_pct:+.2f}%). Exiting on the reason, "
+                                  f"not the price.")
+                        tag = "thesis_break"
             if reason:
                 proposals.append(OrderProposal(
                     symbol=symbol, side=Side.SELL, quantity=position.quantity,
                     price=quote.price, confidence=1.0, reason=reason, tag=tag,
                 ))
         return proposals
+
+    def _check_rotation(self, quotes) -> list[OrderProposal]:
+        """Free a slot when a clearly stronger signal is being turned away.
+
+        The engine ranks candidates competitively at entry and then never
+        ranks them again — a position is only ever compared against its own
+        entry price. This is the one place a holding has to re-justify its
+        slot against the alternatives.
+
+        OFF by default, and deliberately hard to trigger, because the cost is
+        certain and the benefit is not: a swap pays a full round trip (~1.0%
+        of a $500 position, ~1.8% of a $250 one) to buy a score DIFFERENCE
+        whose predictive power has never been measured on this account. Ship
+        it enabled only once replay shows entry score actually predicts return
+        by more than the swap costs.
+
+        Emits only the SELL. The freed slot is filled by the next tick's
+        ranking pass, so the replacement is chosen by the same competitive
+        process as any other entry rather than being hard-wired to the
+        challenger that happened to trigger the swap.
+        """
+        settings = STATE.settings
+        cap = settings.max_concurrent_positions
+        if not settings.allow_rotation or cap <= 0:
+            return []
+        portfolio = STATE.broker().portfolio()
+        held = {s: p for s, p in self._tool_positions(portfolio).items() if p.quantity > 0}
+        # Only bites when the cap is what is actually turning trades away. With
+        # a free slot the challenger can simply be bought.
+        if len(held) < cap:
+            return []
+        scores = {s.symbol: s.score for s in STATE.signals}
+        challenger = max((s for s in STATE.signals
+                          if s.action == "buy" and s.symbol not in held),
+                         key=lambda s: s.score, default=None)
+        if challenger is None:
+            return []
+        latest = {q.symbol: q for q in quotes}
+        weakest = None
+        for symbol, position in held.items():
+            quote = latest.get(symbol)
+            if quote is None or position.avg_cost <= 0:
+                continue
+            gain_pct = (quote.price / position.avg_cost - 1.0) * 100
+            # Never displace a trade that is working. Rotation exists to
+            # recycle dead capital, not to chase a fresh signal with money
+            # already earning — and a winner cut short still pays the full
+            # round trip on the way out.
+            if gain_pct > 0 or position.breakeven_armed:
+                continue
+            score = scores.get(symbol, 0.0)
+            if weakest is None or score < weakest[1]:
+                weakest = (symbol, score, quote, gain_pct)
+        if weakest is None:
+            return []
+        symbol, score, quote, gain_pct = weakest
+        gap = challenger.score - score
+        if gap < settings.rotation_score_gap:
+            return []
+        return [OrderProposal(
+            symbol=symbol, side=Side.SELL, quantity=held[symbol].quantity,
+            price=quote.price, confidence=1.0, tag="rotation",
+            reason=(f"Rotation: {symbol} now scores {score:.2f} at {gain_pct:+.2f}% "
+                    f"while {challenger.symbol} scores {challenger.score:.2f} "
+                    f"(gap {gap:.2f} ≥ {settings.rotation_score_gap:.2f}) and is "
+                    f"blocked for want of a slot."),
+        )]
 
     def _find_proposal(self, proposal_id: str):
         return next((p for p in STATE.proposals if p.id == proposal_id), None)

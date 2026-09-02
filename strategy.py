@@ -600,15 +600,20 @@ class MomentumStrategy:
         # today's change intraday, the multi-bar change for swing. Requiring
         # TODAY to be green before opening a multi-day position is an intraday
         # constraint that has no business gating a swing entry.
+        # Computed for EVERY outcome, not just entries: a held position needs
+        # its thesis re-tested each tick, and by then the symbol has usually
+        # stopped qualifying as a buy. Only computing this on the buy branch
+        # would make the thesis unreadable exactly when it matters.
+        met, missing = self._confirmations(diag, range_pos, momentum)
+
         if score >= 0.55 and trend_pct > 0 and not overbought and not illiquid and not below_vwap:
-            met, missing = self._confirmations(diag, range_pos, momentum)
             if len(met) >= min_confirmations:
                 confirm_txt = (f" [{len(met)}/{len(self.CONFIRMATION_NAMES)} confirm: "
                                f"{', '.join(met)}]" if min_confirmations else "")
                 return Signal(
                     symbol=quote.symbol, price=quote.price, score=score, action="buy",
                     reason=f"Uptrend: {reason_txt}.{confirm_txt}",
-                    diagnostics=diag,
+                    diagnostics=diag, confirmations=met,
                 )
             # Scored well but the factors disagree — the expensive kind of trade.
             return Signal(
@@ -616,7 +621,7 @@ class MomentumStrategy:
                 score=clamp(score, 0.0, 0.54), action="watch",
                 reason=(f"Not converged — only {len(met)}/{min_confirmations} confirmations "
                         f"({', '.join(met) or 'none'}); missing {', '.join(missing)}."),
-                diagnostics=diag,
+                diagnostics=diag, confirmations=met,
             )
 
         if below_vwap and score >= 0.55:
@@ -629,7 +634,7 @@ class MomentumStrategy:
             symbol=quote.symbol, price=quote.price,
             score=clamp(score, 0.0, 0.5), action="watch",
             reason=f"Watching — {watch_note}.",
-            diagnostics=diag,
+            diagnostics=diag, confirmations=met,
         )
 
     def _tick_only_signal(self, quote: Quote, diag, momentum: float,

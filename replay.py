@@ -55,6 +55,9 @@ from strategy import MomentumStrategy
 VALID_EXIT_REASONS = {
     "profit_lock", "stop_loss", "trailing_stop",
     "ai_sell", "strategy_sell", "session_end", "max_hold", "manual",
+    # Slot-releasing exits: they close on time, on a given-back gain, on the
+    # entry reason expiring, and on a stronger signal — not on price.
+    "stall", "breakeven", "thesis_break", "rotation",
 }
 
 # Deliberately broad and volatile. The signal engine is selective — it needs
@@ -275,7 +278,9 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
                cash: float = 10_000.0, warmup: int = 30, lock_profit: float = 0.8,
                stop_loss: float = 1.0, trailing: float = 0.0,
                min_confirmations: int = -1, use_atr_sizing: bool = True,
-               split: float = 0.0, verbose: bool = False) -> int:
+               split: float = 0.0, verbose: bool = False,
+               stall_minutes: int = -1, breakeven_pct: float = -1.0,
+               thesis_exit: bool | None = None) -> int:
     """Replay the engine over history. Returns a process exit code."""
     import app
 
@@ -328,7 +333,18 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
         min_confirmations=min_confirmations, use_atr_sizing=use_atr_sizing,
         # Daily bars mean a multi-day horizon; match the engine's semantics.
         trading_horizon=("swing" if period.lower().startswith("day") else "intraday"),
-    ).normalized()
+    )
+    # Slot-releasing exits, overridable so they can be A/B'd against a run
+    # without them. A sentinel (-1 / None) means "leave the profile alone" —
+    # a plain `python3 replay.py` must measure what the app actually ships,
+    # not a variant the harness quietly forced on.
+    if stall_minutes >= 0:
+        state.settings.max_hold_minutes = stall_minutes
+    if breakeven_pct >= 0:
+        state.settings.breakeven_trigger_pct = breakeven_pct
+    if thesis_exit is not None:
+        state.settings.exit_on_thesis_break = thesis_exit
+    state.settings = state.settings.normalized()
     state.proposals = []
     state.signals = []
     state.begin_session()
@@ -367,7 +383,12 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
 
     # Flatten anything still open so every round trip completes and the
     # session_end path gets exercised too.
-    app.TradingEngine.simulated_now = None
+    #
+    # simulated_now stays pinned to the LAST replayed bar for this. Clearing it
+    # first stamped `closed_at` from the wall clock onto positions whose
+    # `opened_at` is a bar timestamp, so every session_end round trip recorded a
+    # nonsense hold time — negative whenever the replayed window ends later than
+    # the moment the replay runs. It is cleared after the flatten instead.
     split_at = ""
     if 0 < split < 1:
         boundary = warmup + int((length - warmup) * split)
@@ -378,6 +399,9 @@ def run_replay(symbols: list[str], period: str = "Min_5", bars: int = 300,
     if open_before:
         print(f"\nFlattening {open_before} open position(s) via stop-at-end…")
         engine._close_positions_at_end(broker.quotes(replay_symbols))
+    # Every round trip is now recorded; the class attribute must not leak into
+    # anything that runs after this in the same process.
+    app.TradingEngine.simulated_now = None
 
     code = _report(app, tmp, broker, engine)
     if split_at:
@@ -532,6 +556,22 @@ def main() -> int:
                              "60%% of the window separately from the rest")
     parser.add_argument("--flat-sizing", action="store_true",
                         help="disable ATR position sizing (A/B against the default)")
+    parser.add_argument("--stall-minutes", type=int, default=-1,
+                        help="per-position time stop in minutes (0 = off). "
+                             "Defaults to the horizon profile")
+    parser.add_argument("--breakeven-pct", type=float, default=-1.0,
+                        help="gain that arms the breakeven stop (0 = off). "
+                             "Defaults to the horizon profile")
+    parser.add_argument("--thesis-exit", dest="thesis_exit", action="store_true",
+                        default=None,
+                        help="exit when the entry thesis breaks (ships OFF — it "
+                             "measured badly; see models.THESIS_FACTORS)")
+    parser.add_argument("--no-thesis-exit", dest="thesis_exit", action="store_false",
+                        help="do not exit when the entry thesis breaks")
+    parser.add_argument("--legacy-exits", action="store_true",
+                        help="price-based exits ONLY — the pre-slot-exit baseline. "
+                             "Use this to A/B whether the slot-releasing exits earn "
+                             "the extra round trips they cause")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="print each round trip as it closes")
     args = parser.parse_args()
@@ -543,7 +583,10 @@ def main() -> int:
                       trailing=args.trailing,
                       min_confirmations=args.min_confirmations,
                       use_atr_sizing=not args.flat_sizing, split=args.split,
-                      verbose=args.verbose)
+                      verbose=args.verbose,
+                      stall_minutes=0 if args.legacy_exits else args.stall_minutes,
+                      breakeven_pct=0.0 if args.legacy_exits else args.breakeven_pct,
+                      thesis_exit=False if args.legacy_exits else args.thesis_exit)
 
 
 if __name__ == "__main__":

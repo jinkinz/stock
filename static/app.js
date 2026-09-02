@@ -162,6 +162,27 @@ function render(data) {
   const holdEl = el("maxHoldDays");
   if (holdEl && document.activeElement !== holdEl) holdEl.value = settings.max_hold_days ?? 0;
 
+  // Slot-releasing exits. The minute clock is intraday's counterpart to
+  // max_hold_days and is meaningless in swing, where the engine ignores it
+  // outright — so hide it there rather than showing a control that cannot act.
+  const stallField = el("stallField");
+  if (stallField) stallField.style.display = swing ? "none" : "";
+  const stallEl = el("maxHoldMinutes");
+  if (stallEl && document.activeElement !== stallEl)
+    stallEl.value = settings.max_hold_minutes ?? 240;
+  const beEl = el("breakevenTriggerPct");
+  if (beEl && document.activeElement !== beEl)
+    beEl.value = settings.breakeven_trigger_pct ?? 0;
+  const thesisEl = el("exitOnThesisBreak");
+  if (thesisEl) thesisEl.checked = !!settings.exit_on_thesis_break;
+  const rotEl = el("allowRotation");
+  if (rotEl) rotEl.checked = !!settings.allow_rotation;
+  const gapField = el("rotationGapField");
+  if (gapField) gapField.style.display = settings.allow_rotation ? "" : "none";
+  const gapEl = el("rotationScoreGap");
+  if (gapEl && document.activeElement !== gapEl)
+    gapEl.value = settings.rotation_score_gap ?? 0.15;
+
   // Scanning wider does not mean trading wider: only the candle budget gets
   // indicators, and the convergence gate treats missing indicators as not
   // confirmed. Show that relationship instead of letting "Max Symbols" imply
@@ -581,16 +602,21 @@ function renderViability(v) {
       fix = `no trade size works \u2014 the target must exceed ${m.breakeven_pct.toFixed(2)}%`;
     } else if (m.reachable === false) {
       const b = v.sizing_basis || {};
+      // Spell out the arithmetic. "because you allow N concurrent positions"
+      // read as a restriction the user had imposed, when it is the DIVISOR:
+      // the account is split N ways, so each slot is what one position can
+      // fund. Naming it as a division makes "hold fewer" an obvious lever
+      // rather than a puzzling suggestion.
       const derivation = b.equity
-        ? ` (${money(b.equity)} \u00d7 ${Math.round((b.cash_fraction || 0) * 100)}%, because you allow`
-          + ` ${b.max_positions} concurrent positions)`
+        ? ` \u2014 your ${money(b.equity)} split ${b.max_positions} ways`
+          + ` (${Math.round((b.cash_fraction || 0) * 100)}% each)`
         : "";
       // The size that would work is more than a quarter of the account, which
       // is the most any single position may take.
-      fix = `${money(m.min_viable_notional)}/trade would clear it, but you can only fund`
-          + ` ${money(m.affordable_notional)}${derivation} \u2014 so raise the target above`
-          + ` ${m.breakeven_pct.toFixed(2)}%, allow fewer positions, add capital,`
-          + ` or switch to Swing`;
+      fix = `${money(m.min_viable_notional)}/trade would clear it, but one position`
+          + ` can only fund ${money(m.affordable_notional)}${derivation}. So: hold fewer`
+          + ` positions at once (bigger each), add capital, raise the target above`
+          + ` ${m.breakeven_pct.toFixed(2)}%, or switch to Swing`;
     } else {
       fix = `raise trade size to ~${money(m.min_viable_notional)}, or the target above ${m.breakeven_pct.toFixed(2)}%`;
     }
@@ -946,6 +972,11 @@ function collectSettings() {
     duration_minutes:      Number(form.get("duration_minutes")),
     tick_interval_seconds: Number(form.get("tick_interval_seconds")),
     max_hold_days:         num("maxHoldDays"),
+    max_hold_minutes:      num("maxHoldMinutes"),
+    breakeven_trigger_pct: num("breakevenTriggerPct"),
+    rotation_score_gap:    num("rotationScoreGap"),
+    exit_on_thesis_break:  el("exitOnThesisBreak").checked,
+    allow_rotation:        el("allowRotation").checked,
     use_premarket_watchlist: el("usePremarketWatchlist").checked,
     stop_at_end:             el("stopAtEnd").checked,
     enforce_trade_viability: el("enforceViability").checked,
@@ -1149,5 +1180,13 @@ connectStream();
 // two views of the same ledger and must never disagree about the period.
 function refreshPerformance() { loadMetrics(); loadTrades(); loadPerformance(); }
 el("metricsWindow")?.addEventListener("change", refreshPerformance);
+
+// The gap only means anything while rotation is on; showing it otherwise
+// implies a control that cannot act. render() re-syncs it from server state,
+// but that is a whole tick away — reveal it on the click.
+el("allowRotation")?.addEventListener("change", (e) => {
+  const gap = el("rotationGapField");
+  if (gap) gap.style.display = e.target.checked ? "" : "none";
+});
 refreshPerformance();
 setInterval(refreshPerformance, 60000);

@@ -73,12 +73,17 @@ class RiskInvariantTest(unittest.TestCase):
     def test_risk_is_equal_across_wildly_different_symbols(self):
         # Headroom so no dollar clamp binds — the invariant is about the risk
         # maths, and a clamp is a separate, deliberate override of it.
-        quiet = self.size(0.5, spendable=1_000_000.0)
-        wild = self.size(5.0, spendable=1_000_000.0)
+        # The cash cap is a share of EQUITY now, not of whatever cash is left,
+        # so headroom means a modest risk % rather than a huge `spendable`:
+        # piling on cash beyond the account's own value no longer buys room.
+        quiet = self.size(0.5, risk_pct=0.2)
+        wild = self.size(5.0, risk_pct=0.2)
         risk_quiet = quiet.quantity * quiet.stop_distance
         risk_wild = wild.quantity * wild.stop_distance
+        self.assertNotIn("capped", quiet.reason)
+        self.assertNotIn("capped", wild.reason)
         self.assertAlmostEqual(risk_quiet, risk_wild, places=4)
-        self.assertAlmostEqual(risk_quiet, 100_000 * 0.005, places=4)
+        self.assertAlmostEqual(risk_quiet, 100_000 * 0.002, places=4)
 
     def test_clamps_reduce_risk_below_target_never_above(self):
         # A quiet symbol needs many shares to reach the risk target, so the
@@ -157,9 +162,25 @@ class ClampTest(unittest.TestCase):
         self.assertIn("max trade value", result.reason)
 
     def test_never_exceeds_the_cash_fraction(self):
-        result = self.base(spendable=10_000.0)
+        # Measured against EQUITY, so every slot is the same size however much
+        # cash happens to be left. Charging it against remaining cash made
+        # positions shrink geometrically as the account filled up — $250,
+        # $187, $141, $105, $79 over five slots on $1,000 — and only the first
+        # one cleared its own round-trip cost.
+        result = self.base(equity=10_000.0, spendable=10_000.0)
         self.assertLessEqual(result.notional,
                              10_000.0 * MAX_CASH_FRACTION_PER_TRADE + 0.01)
+
+    def test_the_share_does_not_shrink_as_cash_is_spent(self):
+        full = self.base(equity=10_000.0, spendable=10_000.0)
+        # Same account, most of it already deployed elsewhere.
+        partly_spent = self.base(equity=10_000.0, spendable=3_000.0)
+        self.assertAlmostEqual(full.notional, partly_spent.notional, places=2)
+
+    def test_available_cash_is_still_a_hard_ceiling(self):
+        # Sizing off equity must never authorise spending money that is gone.
+        result = self.base(equity=10_000.0, spendable=800.0)
+        self.assertLessEqual(result.notional, 800.0)
 
     def test_never_exceeds_available_cash(self):
         result = self.base(spendable=50.0, max_trade_value=1_000_000.0)

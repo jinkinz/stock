@@ -40,18 +40,22 @@ ABSOLUTE_CASH_FRACTION_CEILING = 0.50
 
 
 def cash_fraction_for(max_concurrent_positions: int) -> float:
-    """Share of cash a single position may take, given how many are allowed.
+    """Share of the ACCOUNT a single position may take, given how many are allowed.
 
     A fixed 25% assumed you always wanted four-plus positions. If you only
     allow two, that fixed cap strands half the account and makes each position
     too small to clear its own costs — the concentration limit and the
     viability floor end up pulling against each other. Spread the account over
     the number of positions actually permitted instead.
+
+    Plain 1/N, with only a ceiling. The old 25% FLOOR meant more than four
+    slots could never be equal-weighted: at N=5 every position still asked for
+    25%, so five of them wanted 125% of the account and the later ones simply
+    got whatever was left. N now means what it says.
     """
     if max_concurrent_positions <= 0:
         return MAX_CASH_FRACTION_PER_TRADE
-    share = 1.0 / max_concurrent_positions
-    return min(ABSOLUTE_CASH_FRACTION_CEILING, max(MAX_CASH_FRACTION_PER_TRADE, share))
+    return min(ABSOLUTE_CASH_FRACTION_CEILING, 1.0 / max_concurrent_positions)
 
 
 @dataclass
@@ -69,16 +73,34 @@ class SizingResult:
 
 
 def _clamp_to_budget(quantity: float, price: float, max_trade_value: float,
-                     spendable: float, cash_fraction: float = MAX_CASH_FRACTION_PER_TRADE) -> tuple[float, str]:
-    """Apply the hard dollar ceilings. Returns (quantity, note)."""
+                     spendable: float, cash_fraction: float = MAX_CASH_FRACTION_PER_TRADE,
+                     equity: float = 0.0) -> tuple[float, str]:
+    """Apply the hard dollar ceilings. Returns (quantity, note).
+
+    The share is taken from EQUITY — the whole account — not from whatever cash
+    happens to be left. Charging it against remaining cash re-applied the same
+    fraction to a shrinking pool, so positions decayed geometrically: at
+    $1,000 over 5 slots they came out $250, $187, $141, $105, $79. Only the
+    first cleared its own round-trip cost, every later one was unprofitable by
+    construction purely because it was opened later, and $237 was never
+    deployed at all. Against equity each slot is the same size, which is what
+    "5 positions" is supposed to mean.
+
+    `spendable` remains a hard ceiling below that — you cannot spend cash you
+    do not have — so a large first position still limits the next one. It just
+    limits it by actual scarcity rather than by compounding a percentage.
+    """
     note = ""
     if max_trade_value > 0 and quantity * price > max_trade_value:
         quantity = max_trade_value / price
         note = "capped by max trade value"
-    cash_cap = spendable * cash_fraction
+    # Fall back to cash only when equity is unknown, so a caller that cannot
+    # supply it degrades to the old behaviour instead of sizing on zero.
+    base = equity if equity > 0 else spendable
+    cash_cap = base * cash_fraction
     if quantity * price > cash_cap:
         quantity = cash_cap / price
-        note = f"capped at {cash_fraction:.0%} of available cash"
+        note = f"capped at {cash_fraction:.0%} of the account"
     if quantity * price > spendable:
         quantity = spendable / price
         note = "capped by available cash"
@@ -123,7 +145,7 @@ def size_position(price: float, atr: float, equity: float, spendable: float,
 
     quantity, cap_note = _clamp_to_budget(
         quantity, price, max_trade_value, spendable,
-        cash_fraction_for(max_concurrent_positions))
+        cash_fraction_for(max_concurrent_positions), equity)
     quantity = round(quantity, 6)
     reason = detail + (f"; {cap_note}" if cap_note else "")
     return SizingResult(quantity=quantity, notional=round(quantity * price, 2),

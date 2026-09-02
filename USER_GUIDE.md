@@ -125,6 +125,10 @@ results you trust, then start live with a small budget.
 | **Lock Profit (%)** | Mechanical rule: any position up this % is sold automatically, regardless of the AI | 1–2 |
 | **Stop Loss (%)** | Mechanical rule: any position down this % from entry is sold automatically | 2 (default) |
 | **Trailing Stop (%)** | Mechanical rule: a profitable position falling this % below its peak is sold | 1–2 or off |
+| **Max hold (minutes)** | Time stop: closes a position that has held a slot this long without resolving | 240 |
+| **Breakeven at (%)** | Once up this much, the stop moves to your entry price | 0 (off — see 5.3) |
+| **Exit on thesis break** | Sell when the reason you bought stops being true | off (see 5.3) |
+| **Rotation** | Let a much stronger signal take a weak position's slot | off (see 5.3) |
 | **AI Strategy** | fifo / scalp / swing / conservative / aggressive (see below) | conservative |
 
 *(How signals are scored, how the universe is chosen, and how the AI brain
@@ -412,6 +416,123 @@ filled order, and each closed trade records whether its fee figure was `actual`,
 `PAPER_FEE_PER_TRADE` in `.env` overrides the whole model with a flat per-order
 charge. Useful for a quick what-if; it will not resemble a real bill, and the
 banner warns whenever it is active.
+
+### 5.3 Slot-releasing exits — "how long will it hold?"
+
+You hold a limited number of positions at once (**Max Positions**). While they
+are all full, every new buy is refused — even a perfect one. In one observed
+session that blocked **52 buys**, all of them for the same reason: `already
+holding 2 positions (max 2)`.
+
+Until these rules existed, the only things that could release a slot were the
+profit target, the stop, and the closing bell. A position drifting at +0.3% held
+your capital for the rest of the session. Four rules can now release it early:
+
+| Rule | Releases the slot when… | Exit reason | Ships |
+|---|---|---|---|
+| **Max hold (minutes)** | it has held the slot too long without resolving | `stall` | **on**, 240 |
+| **Breakeven at (%)** | it ran up that far, then gave it all back | `breakeven` | off |
+| **Exit on thesis break** | the reason you bought stopped being true | `thesis_break` | off |
+| **Rotation** | a much stronger signal is being turned away | `rotation` | off |
+
+**Why three of the four are off by default — this is the important part.**
+
+Freeing a slot is not free. The freed slot gets refilled, and the replacement
+pays a **full round trip**. Holding a flat position costs nothing more, because
+its entry fee is already spent. So a replacement has to clear the whole cost
+from scratch just to break even against doing nothing:
+
+| Position size | Round trip + slippage | Win rate needed before recycling pays |
+|---|---|---|
+| $500 | 1.0% | **67%** |
+| $250 | 1.8% | **93%** |
+
+That is the theory. The measurement agreed. Over 60 replayed round trips,
+against price-only exits as the baseline:
+
+| Configuration | Expectancy | Win rate | Net |
+|---|---|---|---|
+| Baseline — price exits only | **−0.06** | **54.8%** | **−3.96** |
+| + Max hold 120 min | −0.47 | 32.8% | −30.08 |
+| + Breakeven at 0.4% | −0.78 | 37.5% | −49.85 |
+| + Max hold 240 min *(shipped)* | −0.83 | 39.1% | −52.93 |
+| + Exit on thesis break | −4.52 | 17.6% | −334.40 |
+
+Every one made it worse. Two findings explain it:
+
+- **Winners are slow.** Winning trades ran a median of **1080 minutes** while
+  losers resolved in 123. A 120-minute time stop cut **74% of the winners** —
+  which is the entire drop in win rate. The time stop ships at 240 for that
+  reason: on a faithful one-session replay it is *neutral* (−186.64 vs −186.63
+  net), so it bounds the wait without cutting trades short. It only costs money
+  on windows where positions run for days, which intraday never should.
+- **Breakeven exits winners, not losers.** It left the trade count identical at
+  60 while dropping the win rate 8 points: trades routinely dip before they run,
+  and it was closing them flat at the dip.
+
+The reasoning behind all four is sound, and this is one window on one symbol
+set — which is why they are all still here, fully configurable. But they ship
+off, because the evidence available says they cost money.
+
+**Measure before you enable any of them:**
+
+```bash
+python3 replay.py --legacy-exits              # the price-only baseline
+python3 replay.py --breakeven-pct 0.4         # A/B one rule at a time
+python3 replay.py --stall-minutes 120
+python3 replay.py --thesis-exit
+python3 replay.py --legacy-exits --split 0.6  # train/test, not one regime
+```
+
+If a rule does not beat `--legacy-exits` on **your** window, leave it off.
+
+One caveat on the harness: the default replay (`Min_15`, 400 bars) spans about
+15 trading days and never expires its session, so positions run for days. That
+is not faithful intraday. For a true single-session test use
+`--period Min_1 --bars 390` — but expect ~16 trades, below the point where the
+numbers mean much.
+
+**And the honest bottom line:** none of this creates opportunity. If high-quality
+signals are being turned away, the binding constraint is capital, not the cap.
+Keep each position near $500 and your slot count is just `budget ÷ 500` — at
+$1,000 that is 2. See section 5.1a.
+
+### 5.4 Max Positions is your position size
+
+This setting is not only a ceiling on how many trades you hold — it is the
+**divisor** that sets how big each one is. Your account is split N ways:
+
+| Max Positions | Each position gets | On a $1,000 account | US round-trip cost |
+|---|---|---|---|
+| 2 | 50% | $500 | 1.00% |
+| 3 | 33% | $333 | 1.40% |
+| 4 | 25% | $250 | 1.80% |
+| 5 | 20% | $200 | 2.21% |
+
+Raising the number makes every position **smaller**, and because brokerage fees
+are dominated by flat minimums, smaller positions cost a **higher percentage**.
+That is why allowing more trades can make each one unprofitable — and why
+"hold fewer at once" is often the only lever that clears the viability banner
+on a small account.
+
+There is no "unlimited" setting. It used to accept 0, which meant two
+contradictory things at once — the risk layer read it as *no cap at all* while
+the sizing layer read it as *assume four positions*. It now falls back to the
+default of 5 and is clamped to 1–20. A concentration limit with an off switch
+is protection that does not exist.
+
+**Each slot is the same size.** The share is taken from your whole account, not
+from whatever cash is left over. That distinction used to be a real bug:
+charging the fraction against remaining cash re-applied the same percentage to
+a pool every purchase shrank, so on $1,000 across 5 slots the positions came
+out $250, $187, $141, $105 and $79. Only the *first* one cleared its own
+round-trip cost — the rest were unprofitable purely because they were opened
+later — and $237 was never invested at all. Fixing it improved replayed
+expectancy more than any exit rule in section 5.3 did.
+
+A large first purchase still limits the next one, of course: you cannot spend
+cash you no longer have. But it limits it by actual scarcity, not by
+compounding a percentage against itself.
 
 ---
 

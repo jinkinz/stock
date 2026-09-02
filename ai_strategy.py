@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -198,13 +199,33 @@ _load_env()
 # ─────────────────────────────────────────────────────────────────────────────
 # HTTP call implementations
 # ─────────────────────────────────────────────────────────────────────────────
+def _post_json(req: urllib.request.Request) -> dict:
+    """Send the request, returning the parsed body — and never hide WHY a call failed.
+
+    urllib puts the provider's explanation in the BODY of an HTTPError, which
+    str(exc) discards. That turned "Your credit balance is too low to access
+    the Anthropic API" into a bare "HTTP Error 400: Bad Request", so the
+    diagnostics panel showed 13 silent fallbacks with no way to tell a billing
+    problem from a malformed request. Read the body and re-raise with it.
+    """
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")
+        try:
+            detail = json.loads(body)["error"]["message"]
+        except Exception:
+            detail = body.strip()[:300] or exc.reason
+        raise RuntimeError(f"HTTP {exc.code}: {detail}") from None
+
+
 def _call_anthropic(api_key: str, model: str, system: str, user: str) -> str:
     payload = json.dumps({"model": model, "max_tokens": 1500, "system": system,
                           "messages": [{"role": "user", "content": user}]}).encode()
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=payload,
         headers={"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"}, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())["content"][0]["text"]
+    return _post_json(req)["content"][0]["text"]
 
 def _call_openai_compat(base_url: str, api_key: str, model: str, system: str, user: str, extra_headers: dict | None = None) -> str:
     payload = json.dumps({"model": model, "max_tokens": 1500,
@@ -215,8 +236,7 @@ def _call_openai_compat(base_url: str, api_key: str, model: str, system: str, us
     if extra_headers:
         headers.update(extra_headers)
     req = urllib.request.Request(f"{base_url.rstrip('/')}/v1/chat/completions", data=payload, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())["choices"][0]["message"]["content"]
+    return _post_json(req)["choices"][0]["message"]["content"]
 
 def _call_gemini(api_key: str, model: str, system: str, user: str) -> str:
     gen_cfg = {"maxOutputTokens": 2048}
@@ -230,8 +250,7 @@ def _call_gemini(api_key: str, model: str, system: str, user: str) -> str:
                           "generationConfig": gen_cfg}).encode()
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
+    data = _post_json(req)
     cand = (data.get("candidates") or [{}])[0]
     parts = (cand.get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts).strip()
