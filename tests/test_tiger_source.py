@@ -41,11 +41,18 @@ class FakeTigerClient:
     """Records what it was asked for, so a test can prove a symbol off the
     allowlist never reached the API — which is what protects the quota."""
 
-    def __init__(self, bars=None, raises=None):
+    def __init__(self, bars=None, raises=None, listing=None):
         # {(symbol, period): [row, ...]}
         self._bars = bars or {}
         self._raises = raises
+        # None => get_symbols fails, exercising the fail-open path.
+        self._listing = listing
         self.requested: list[tuple[tuple[str, ...], str]] = []
+
+    def get_symbols(self, market=None):
+        if self._listing is None:
+            raise RuntimeError("listing unavailable")
+        return list(self._listing)
 
     def get_bars(self, symbols, period="day", limit=251):
         self.requested.append((tuple(symbols), period))
@@ -137,6 +144,44 @@ class QuotaProtectionTest(unittest.TestCase):
         src.quotes(["D05.SG", "O39.SG"])
         self.assertEqual(len(src.client().requested), 2,
                          "expected exactly one daily + one minute bulk call")
+
+
+class ListingValidationTest(unittest.TestCase):
+    """get_symbols is FREE; get_bars is not. A misspelled ticker returns no
+    bars and still burns a 30-day slot — the exact way nine were lost."""
+
+    def test_unlisted_symbol_is_never_fetched(self):
+        client = FakeTigerClient(listing=["D05.SI"])
+        src = TigerSource(symbols=["D05.SG", "NOPE.SG"], client=client)
+        src.quotes(["D05.SG", "NOPE.SG"])
+        asked = {s for call in client.requested for s in call[0]}
+        self.assertIn("D05.SI", asked)
+        self.assertNotIn("NOPE.SI", asked,
+                         "an unlisted ticker was fetched — that burns a 30-day slot")
+
+    def test_unlisted_symbols_are_surfaced_not_silently_skipped(self):
+        client = FakeTigerClient(listing=["D05.SI"])
+        src = TigerSource(symbols=["D05.SG", "NOPE.SG"], client=client)
+        src.quotes(["D05.SG", "NOPE.SG"])
+        self.assertEqual(src.unlisted, ["NOPE.SG"])
+        self.assertEqual(src.coverage()["unlisted"], ["NOPE.SG"])
+
+    def test_listing_is_fetched_once_not_per_call(self):
+        client = FakeTigerClient(listing=["D05.SI"])
+        src = TigerSource(symbols=["D05.SG"], client=client)
+        src.quotes(["D05.SG"])
+        src._cache_at = 0.0   # defeat the quote cache, not the listing cache
+        src.quotes(["D05.SG"])
+        self.assertIsNotNone(src._universe)
+
+    def test_fails_open_when_the_listing_cannot_be_read(self):
+        # Unlike the halt check, absence of a catalogue must NOT block: the
+        # allowlist is already hand-set, and refusing to trade because a free
+        # metadata call failed is the worse error.
+        client = FakeTigerClient(listing=None)
+        src = TigerSource(symbols=["D05.SG"], client=client)
+        self.assertEqual(src._permitted(["D05.SG"]), ["D05.SG"])
+        self.assertIn("listing unavailable", src.last_error)
 
 
 class QuoteSynthesisTest(unittest.TestCase):

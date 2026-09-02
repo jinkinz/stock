@@ -179,7 +179,11 @@ python3 app.py        # from repo root — serves http://127.0.0.1:8765
   `discover_symbols()` returns that allowlist rather than the 1616 names Tiger
   will happily list — ONE unfiltered discovery pass would exhaust a month of
   quota inside a single tick. Set the watchlist with `TIGER_SG_SYMBOLS` in
-  `.env`. This is why SG is a fixed watchlist and NOT a scanned universe:
+  `.env`. Symbols are additionally checked against Tiger's SG listing before
+  any bar request — `get_symbols` is FREE and `get_bars` is not, so a
+  misspelled ticker must never reach the metered call. That check fails OPEN
+  (a hand-set allowlist should not be refused because a catalogue call failed),
+  unlike the halt check below, which fails closed. This is why SG is a fixed watchlist and NOT a scanned universe:
   `max_scan_symbols` and turnover discovery are meaningless there.
 - **SG symbols are `.SG` in this repo and `.SI` at Tiger.** Translation lives
   only in `tiger_source.to_tiger`/`to_repo`. Nine quota slots were burned

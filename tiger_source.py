@@ -154,6 +154,12 @@ class TigerSource:
         self._cache: dict[str, Quote] = {}
         self._cache_at: float = 0.0
         self.last_error: str = ""
+        # Tiger's SG listing, fetched once and free. None = not yet looked up.
+        self._universe: set | None = None
+        # Allowlist entries Tiger does not list — surfaced rather than
+        # silently skipped, because a typo here looks exactly like a quiet
+        # counter and would otherwise go unnoticed until it never traded.
+        self.unlisted: list[str] = []
 
     # ------------------------------------------------------------------
     # Client
@@ -190,7 +196,37 @@ class TigerSource:
     def _permitted(self, symbols: list[str]) -> list[str]:
         """Filter to the allowlist. Anything else is DROPPED, not fetched —
         an unknown symbol costs a 30-day quota slot on first touch."""
-        return [s for s in dict.fromkeys(s.upper() for s in symbols) if s in self.symbols]
+        wanted = [s for s in dict.fromkeys(s.upper() for s in symbols) if s in self.symbols]
+        return self._listed(wanted)
+
+    def _listed(self, symbols: list[str]) -> list[str]:
+        """Drop symbols Tiger does not list for SG.
+
+        `get_symbols` is FREE; `get_bars` is not. A misspelled ticker returns
+        no bars and still consumes a 30-day quota slot, which is precisely how
+        nine slots were lost to ".SG"/bare symbols during the initial probe.
+        Checking a free listing before spending a scarce one is the whole point.
+
+        Fails OPEN: if the listing cannot be fetched, the allowlist is used as
+        given. The allowlist is already a deliberate, hand-set list, so
+        refusing to trade because a catalogue call failed would be the worse
+        error — unlike the halt check, where absence of evidence must block.
+        """
+        if self._universe is None:
+            try:
+                from tigeropen.common.consts import Market
+                listing = self.client().get_symbols(market=Market.SG)
+                self._universe = {to_repo(str(s)) for s in listing}
+            except Exception as exc:
+                self.last_error = f"SG listing unavailable: {exc}"
+                self._universe = set()
+        if not self._universe:
+            return symbols
+        known = [s for s in symbols if s in self._universe]
+        for missing in (s for s in symbols if s not in self._universe):
+            if missing not in self.unlisted:
+                self.unlisted.append(missing)
+        return known
 
     # ------------------------------------------------------------------
     # Data surface
@@ -210,9 +246,10 @@ class TigerSource:
     def candles(self, symbol: str, period: str = "Min_1", count: int = 120) -> list[dict]:
         """Bars in the repo's shape: [{close, open, high, low, volume, turnover,
         timestamp}, ...] oldest-first. Empty for a symbol off the allowlist."""
-        if not self.serves(symbol):
+        wanted = self._permitted([symbol])
+        if not wanted:
             return []
-        rows = self._bars([symbol.upper()], period=period, limit=count)
+        rows = self._bars(wanted, period=period, limit=count)
         return [self._row_to_candle(r) for r in rows.get(symbol.upper(), [])]
 
     def quote(self, symbol: str) -> Quote:
@@ -357,5 +394,6 @@ class TigerSource:
             "source": self.name,
             "symbols": list(self.symbols),
             "cached": len(self._cache),
+            "unlisted": list(self.unlisted),
             "last_error": self.last_error,
         }
