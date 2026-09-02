@@ -1875,11 +1875,18 @@ class TradingEngine:
         for symbol in targets:
             if now - self._candle_fetched_at.get(symbol, 0.0) < refresh:
                 continue
+            # Stamp BEFORE the call, and keep the stamp on failure. A symbol
+            # the broker will never serve — an SG counter on an account with no
+            # SG quote entitlement raises 301604 "no quote access" on every
+            # candle request — otherwise never records an attempt and is
+            # retried on every single tick, forever, against a 10 req/s budget.
+            # A failed fetch is an attempt; the next one waits its turn like
+            # any other.
+            self._candle_fetched_at[symbol] = now
             try:
                 candles = broker.candles(symbol, period=period, count=count)
             except Exception:
                 continue
-            self._candle_fetched_at[symbol] = now
             if candles and hasattr(STATE.strategy, "ingest_candles"):
                 STATE.strategy.ingest_candles(symbol, candles)
 
